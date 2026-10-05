@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "FC Gallery + ИПК Assistant",
+  "version": "1.3.8",
+  "description": "Gallery и ИПК FC 27 внутри EA Web App: FUTBIN-составы, клуб, цены и управляемая покупка.",
+  "permissions": ["storage", "tabs", "alarms"],
+  "host_permissions": [
+    "https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*",
+    "https://r2.fut.gg/*",
+    "https://raw.githubusercontent.com/sergunchik218/FC-Gallery_SBC-Assistant/*",
+    "https://www.futbin.com/*"
+  ],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [
+    {
+      "matches": ["https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*"],
+      "js": ["page-bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*"],
+      "js": ["core.js", "ea-panel.js"],
+      "css": ["ea-panel.css"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.futbin.com/27/*"],
+      "js": ["futbin-import.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {"default_popup": "popup.html"}
+}
