@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '1.3.9';
+  const BRIDGE_VERSION = '1.4.0';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), scores = {}, names = {};
   const format = value => Number(value || 0).toLocaleString('ru-RU');
@@ -231,8 +231,13 @@
   }
   async function calculate(setId, letter, controls, status, result) {
     const row = selectedSet(setId), target = row?.grades?.find(g => g.letter === letter); if (!row || !target) throw new Error('Выбери набор и грейд');
-    const ids = [...new Set((row.pool || []).map(Number))]; status.className = ''; status.textContent = 'Загружаю базу карт и цены FUT.GG…';
-    const [priceAnswer, cardAnswer] = await Promise.all([runtime({type: 'fcgh.prices', platform: controls.platform.value, ids}), runtime({type: 'fcgh.cards', ids})]);
+    const ids = [...new Set((row.pool || []).map(Number))]; status.className = ''; status.textContent = 'Сравниваю цены FUT.GG и Item Score FUTBIN…';
+    const [priceAnswer, cardAnswer, futbinAnswer] = await Promise.all([
+      runtime({type: 'fcgh.prices', platform: controls.platform.value, ids}),
+      runtime({type: 'fcgh.cards', ids}),
+      runtime({type: 'fcgh.futbin.scores', platform: controls.platform.value}).catch(() => null)
+    ]);
+    const futbinByScore = Object.fromEntries((futbinAnswer?.data?.rows || []).map(item => [Number(item.score), item]));
     for (const id of ids) {
       if (Number.isFinite(scores[id]) && scores[id] > 0) continue;
       const card = cardAnswer.cards[id]; if (!card) continue;
@@ -254,7 +259,7 @@
       fallback = makePlan(15_000_000, 1_000_000_000);
     }
     currentPlan.fallback = fallback;
-    currentPlan.meta = {setId, setName: row.name, letter, platform: controls.platform.value, priceAt: priceAnswer.at}; result.replaceChildren();
+    currentPlan.meta = {setId, setName: row.name, letter, platform: controls.platform.value, priceAt: priceAnswer.at, futbinAt: futbinAnswer?.data?.readAt || null}; result.replaceChildren();
     currentPlan.planning = {pool: ids, slots: row.cards, target: Number(target.threshold), prices: priceAnswer.prices};
     const recommendedMax = fallback.reached && fallback.missing.length ? Math.max(...fallback.missing.map(card => card.price)) : 0;
     const recommendedBudget = fallback.reached ? fallback.missing.reduce((sum, card) => sum + cardCeiling(card.price, 15_000_000), 0) : 0;
@@ -266,6 +271,9 @@
     const withoutMarket = eligible.filter(id => !collected.has(id) && !(Number.isSafeInteger(Number(priceAnswer.prices[id])) && Number(priceAnswer.prices[id]) > 0));
     const cardLabel = id => names[id] || `Карта #${id}${cardAnswer.cards[id]?.rating ? ` · рейтинг ${cardAnswer.cards[id].rating}` : ''}`;
     result.append(el('div', {class: 'fcgh-grade-summary', text: `Выбран грейд ${letter}: цель ${format(target.threshold)} очков, состав из ${row.cards} карт.`}));
+    result.append(el('div', {class: 'fcgh-price-sources', text: futbinAnswer
+      ? 'Ориентиры: FUT.GG — цена конкретной карты; FUTBIN — минимальная цена карты с таким же Item Score; перед покупкой — живой лот EA.'
+      : 'Ориентиры: FUT.GG и живой рынок EA. Таблица Item Score FUTBIN сейчас не загрузилась, план продолжает работать без неё.'}));
     result.append(el('div', {class: 'fcgh-plan-overview'}, [
       el('b', {text: `Для грейда ${letter} нужно закрыть ${row.cards} мест.`}),
       el('span', {text: `Уже засчитано: ${ownedCount}. Доступно для покупки до ${format(configuredMax)}: ${pricedInLimit.length}.`}),
@@ -291,7 +299,9 @@
     const list = el('ol', {class: 'fcgh-plan'});
     for (const card of shownPlan.missing) {
       const ceiling = currentPlan.reached ? Number(controls.maxPrice.value) : Math.max(recommendedMax, card.price);
-      list.append(el('li', {'data-card-id': String(card.id)}, [el('b', {text: names[card.id] || '#' + card.id}), el('span', {text: ` — ожидаемая цена ${format(card.price)}, искать самый дешёвый лот до ${format(ceiling)} · ${format(card.score)} очков`})]));
+      const futbin = futbinByScore[Number(card.score)];
+      const comparison = futbin ? ` · FUTBIN: от ${format(futbin.price)} за ${format(card.score)} очков` : '';
+      list.append(el('li', {'data-card-id': String(card.id)}, [el('b', {text: names[card.id] || '#' + card.id}), el('span', {text: ` — FUT.GG ${format(card.price)}, искать самый дешёвый лот EA до ${format(ceiling)} · ${format(card.score)} очков${comparison}`})]));
     }
     result.append(list);
     controls.start.disabled = !currentPlan.missing.length;
@@ -308,7 +318,10 @@
       if (withoutMarket.length) {
         diagnostic.append(el('span', {text: `Нет актуальной цены или лота (${withoutMarket.length}):`}));
         const unavailable = el('ul');
-        for (const id of withoutMarket.slice(0, 10)) unavailable.append(el('li', {text: `${cardLabel(id)} — сейчас нельзя включить в план`}));
+        for (const id of withoutMarket.slice(0, 10)) {
+          const futbin = futbinByScore[Number(scores[id])];
+          unavailable.append(el('li', {text: `${cardLabel(id)} — конкретного лота нет${futbin ? `; FUTBIN показывает общий ориентир от ${format(futbin.price)} за ${format(scores[id])} очков, но это может быть другая карта` : ''}`}));
+        }
         diagnostic.append(unavailable);
       }
       if (!aboveLimit.length && !withoutMarket.length) diagnostic.append(el('span', {text: `Карточек по количеству хватает, но их очков недостаточно для порога ${format(target.threshold)}.`}));

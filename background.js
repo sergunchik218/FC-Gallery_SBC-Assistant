@@ -5,8 +5,11 @@ const DATA_TTL = 7 * 24 * 60 * 60_000;
 const WEEK_MINUTES = 7 * 24 * 60;
 const FUTBIN_LOAD_TIMEOUT = 60_000;
 const FUTBIN_POLL_INTERVAL = 750;
+const FUTBIN_SCORE_URL = `https://www.futbin.com/${GAME}/squad-building-challenges/cheapest-item-score`;
+const FUTBIN_SCORE_TTL = 10 * 60_000;
 let catalogMemo = null;
 const priceMemo = new Map();
+const futbinScoreMemo = new Map();
 let cardsMemo = null;
 let dataBundleMemo = null;
 
@@ -164,6 +167,32 @@ async function parseFutbinTab(url) {
   }
 }
 
+async function futbinScoreBook(platform = 'ps5', force = false) {
+  if (!['ps5', 'pc'].includes(platform)) throw new Error('Платформа должна быть ps5 или pc');
+  const cached = futbinScoreMemo.get(platform);
+  if (cached && !force && Date.now() - cached.readAt < FUTBIN_SCORE_TTL) return cached;
+  const tab = await chrome.tabs.create({url: FUTBIN_SCORE_URL, active: false});
+  try {
+    const deadline = Date.now() + FUTBIN_LOAD_TIMEOUT;
+    let lastError = null;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, FUTBIN_POLL_INTERVAL));
+      const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
+      if (!currentTab || currentTab.status !== 'complete') continue;
+      const answer = await chrome.tabs.sendMessage(tab.id, {type: 'fcgh.futbin.score.parse', platform}).catch(() => null);
+      if (answer?.ok && answer.data?.rows?.length) {
+        const book = {...answer.data, readAt: Date.now()};
+        futbinScoreMemo.set(platform, book);
+        return book;
+      }
+      if (answer && !answer.ok) lastError = answer.error;
+    }
+    throw new Error(lastError || 'FUTBIN не загрузил таблицу Item Score за 60 секунд');
+  } finally {
+    if (Number.isSafeInteger(tab?.id)) chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
 async function resolveFutbinCards(solution) {
   const book = await baseCards(), at = book.positions;
   const byBase = new Map();
@@ -214,6 +243,10 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
         if (Number.isSafeInteger(id) && book.map.has(id)) prices[id] = book.map.get(id);
       }
       return {ok: true, at: book.at, version: book.version, prices};
+    }
+    if (message?.type === 'fcgh.futbin.scores') {
+      const book = await futbinScoreBook(message.platform || 'ps5', message.force === true);
+      return {ok: true, data: book};
     }
     if (message?.type === 'fcgh.cards') {
       const book = await baseCards(), cards = {};
