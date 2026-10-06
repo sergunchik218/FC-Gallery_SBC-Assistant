@@ -12,12 +12,11 @@ function galleryPlan(input){
  const scores=input.scores||{},prices=input.prices||{};
  const cards=[];
  for(const id of ids){const score=Number(scores[id]);if(!Number.isFinite(score)||score<=0)continue;const collected=held.has(id);const raw=Number(prices[id]);const price=collected?0:(Number.isSafeInteger(raw)&&raw>0?raw:null);if(!collected&&(price===null||price>maxPrice))continue;cards.push({id,score,price,collected});}
- if(cards.length<slots)return{reached:false,score:0,cost:0,lineup:[],missing:[],reason:'not-enough-cards',available:cards.length,needed:slots};
  const fronts=Array.from({length:slots+1},()=>[]);fronts[0]=[{score:0,cost:0,chosen:[]}];
  const trim=list=>{list.sort((a,b)=>b.score-a.score||a.cost-b.cost);const out=[];let cheapest=Infinity;for(const row of list){if(row.cost<cheapest){out.push(row);cheapest=row.cost;}}return out;};
  cards.forEach((card,index)=>{for(let used=slots;used>=1;used--){const add=[];for(const state of fronts[used-1]){const cost=state.cost+card.price;if(cost>budget)continue;add.push({score:Math.min(target,state.score+card.score),cost,chosen:[...state.chosen,index]});}if(add.length)fronts[used]=trim(fronts[used].concat(add));}});
- const final=fronts[slots];let best=final.filter(x=>x.score>=target).sort((a,b)=>a.cost-b.cost)[0];if(!best)best=final.slice().sort((a,b)=>b.score-a.score||a.cost-b.cost)[0];if(!best)return{reached:false,score:0,cost:0,lineup:[],missing:[],reason:'unreachable'};
- const lineup=best.chosen.map(i=>cards[i]);return{reached:best.score>=target,score:best.score,cost:best.cost,lineup,missing:lineup.filter(x=>!x.collected),reason:best.score>=target?null:'unreachable',available:cards.length,needed:slots};
+ const final=fronts[slots];let best=final.filter(x=>x.score>=target).sort((a,b)=>a.cost-b.cost)[0];if(!best)best=final.slice().sort((a,b)=>b.score-a.score||a.cost-b.cost)[0];if(!best)best=fronts.flat().sort((a,b)=>b.chosen.length-a.chosen.length||b.score-a.score||a.cost-b.cost)[0];if(!best)return{reached:false,score:0,cost:0,lineup:[],missing:[],reason:'unreachable',partial:false,available:cards.length,needed:slots};
+ const lineup=best.chosen.map(i=>cards[i]),reached=best.chosen.length===slots&&best.score>=target;const reason=reached?null:cards.length<slots?'not-enough-cards':best.chosen.length<slots?'budget-limited':'unreachable';return{reached,score:best.score,cost:best.cost,lineup,missing:lineup.filter(x=>!x.collected),reason,partial:!reached&&lineup.length>0,available:cards.length,needed:slots};
 }
 root.GalleryCore={parseCSV,validateCards,plan,galleryPlan};if(typeof module!=='undefined')module.exports=root.GalleryCore;
 })(typeof globalThis!=='undefined'?globalThis:this);

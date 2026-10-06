@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '1.3.8';
+  const BRIDGE_VERSION = '1.3.9';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), scores = {}, names = {};
   const format = value => Number(value || 0).toLocaleString('ru-RU');
@@ -91,7 +91,7 @@
     galleryTab.onclick = () => showTab('gallery'); sbcTab.onclick = () => showTab('sbc');
     category.onchange = () => fillSets(category.value, set, grade); set.onchange = () => fillGrades(set.value, grade);
     sync.onclick = () => syncSet(set.value, status, result).catch(error => fail(status, error));
-    plan.onclick = () => calculate(set.value, grade.value, {platform, maxPrice, budget}, status, result).catch(error => fail(status, error));
+    plan.onclick = () => calculate(set.value, grade.value, {platform, maxPrice, budget, start}, status, result).catch(error => fail(status, error));
     start.onclick = () => execute({maxPrice, budget, after, discount, purchaseMode}, status, result, start, stop).catch(error => fail(status, error));
     stop.onclick = () => { running = false; status.textContent = 'Останавливаю после текущего запроса…'; };
     sbcImport.onclick = () => importSbc(sbcUrl.value, {platform: sbcPlatform}, sbcStatus, sbcResult).catch(error => fail(sbcStatus, error));
@@ -273,6 +273,8 @@
     ]));
     const verdict = currentPlan.reached
       ? `План ${letter} готов: ${format(currentPlan.score)} очков, до ${format(currentPlan.cost)} монет`
+      : currentPlan.partial
+        ? `Полный план пока невозможен. Доступная часть: ${currentPlan.lineup.length} из ${row.cards} мест, ${format(currentPlan.score)} из ${format(target.threshold)} очков, до ${format(currentPlan.cost)} монет.${fallback.reached ? ` Для полного плана нужен потолок ${format(recommendedMax)} и бюджет около ${format(fallback.cost)}.` : ''}`
       : fallback.reached
         ? `Чтобы закрыть грейд ${letter}, подними потолок с ${format(configuredMax)} до ${format(recommendedMax)} монет. Ориентировочный бюджет — ${format(fallback.cost)}, безопасный предел — ${format(recommendedBudget)}.`
       : currentPlan.reason === 'not-enough-cards'
@@ -284,14 +286,16 @@
       use.onclick = () => { controls.maxPrice.value = recommendedMax; controls.budget.value = recommendedBudget; use.textContent = 'Лимиты подставлены — нажми «2. Составить план»'; use.disabled = true; };
       result.append(use);
     }
-    const shownPlan = currentPlan.reached ? currentPlan : (fallback.reached ? fallback : currentPlan);
-    if (shownPlan.missing.length) result.append(el('strong', {text: `Конкретные карты для грейда ${letter}: купить ${shownPlan.missing.length}`}));
+    const shownPlan = currentPlan.reached || currentPlan.partial ? currentPlan : (fallback.reached ? fallback : currentPlan);
+    if (shownPlan.missing.length) result.append(el('strong', {text: shownPlan.reached ? `Конкретные карты для грейда ${letter}: купить ${shownPlan.missing.length}` : `Доступные сейчас карты: купить ${shownPlan.missing.length}`}));
     const list = el('ol', {class: 'fcgh-plan'});
     for (const card of shownPlan.missing) {
       const ceiling = currentPlan.reached ? Number(controls.maxPrice.value) : Math.max(recommendedMax, card.price);
       list.append(el('li', {'data-card-id': String(card.id)}, [el('b', {text: names[card.id] || '#' + card.id}), el('span', {text: ` — ожидаемая цена ${format(card.price)}, искать самый дешёвый лот до ${format(ceiling)} · ${format(card.score)} очков`})]));
     }
     result.append(list);
+    controls.start.disabled = !currentPlan.missing.length;
+    controls.start.textContent = currentPlan.reached ? '3. Купить по плану' : currentPlan.missing.length ? `3. Купить доступные (${currentPlan.missing.length})` : '3. Нет доступных карт';
     if (!currentPlan.reached && !fallback.reached) {
       const diagnostic = el('div', {class: 'fcgh-diagnostics'});
       diagnostic.append(el('b', {text: 'Почему точный план пока не собран:'}));
@@ -312,12 +316,14 @@
     }
     status.textContent = currentPlan.reached
       ? `План ${letter}: уже засчитано ${shownPlan.lineup.filter(x => x.collected).length}, докупить ${shownPlan.missing.length}. Для каждого игрока поиск идёт от минимальной цены до указанного общего потолка.`
-      : fallback.reached
-        ? `Для грейда ${letter} докупить ${shownPlan.missing.length} карт. Нажми кнопку подстановки лимитов, затем ещё раз «2. Составить план».`
+      : currentPlan.partial
+          ? `Можно купить ${currentPlan.missing.length} доступных карт, но этого пока недостаточно для грейда ${letter}. Недоступные карты останутся для следующей проверки.`
+        : fallback.reached
+          ? `Для грейда ${letter} докупить ${shownPlan.missing.length} карт. Нажми кнопку подстановки лимитов, затем ещё раз «2. Составить план».`
         : `Для грейда ${letter} сейчас доступно ${ownedCount + pricedInLimit.length} из ${row.cards} необходимых карт. Ниже показано, какие карты дороже лимита или отсутствуют на рынке.`;
   }
   async function execute(controls, status, result, start, stop) {
-    if (running) return; if (!currentPlan?.reached || !currentPlan.missing.length) throw new Error('Сначала рассчитай достижимый план с недостающими картами');
+    if (running) return; if (!currentPlan?.missing?.length) throw new Error('В текущем плане нет доступных карт для покупки');
     const maxPrice = Number(controls.maxPrice.value), maxSpend = Number(controls.budget.value), mode = controls.after.value, discount = Number(controls.discount.value), purchaseMode = controls.purchaseMode.value;
     if (!Number.isSafeInteger(maxPrice) || maxPrice < 150 || !Number.isSafeInteger(maxSpend) || maxSpend <= 0) throw new Error('Проверь лимиты цены и расходов');
     const meta = currentPlan.meta, planning = currentPlan.planning;
@@ -326,14 +332,15 @@
     const modeNotice = purchaseMode === 'auto'
       ? '\n\nВНИМАНИЕ: автоматические покупки нарушают правила EA и выполняются на ваш риск.'
       : '\n\nПолуавтоматический режим: найденный лот будет куплен только после отдельного подтверждения.';
-    if (!confirm(`План покупки:\n${review}\n\nОбщие расходы не больше ${format(maxSpend)} монет. Перед каждой покупкой будет выбран самый дешёвый BIN.${modeNotice}\n\nПродолжить?`)) return;
+    const partialNotice = currentPlan.reached ? '' : `\n\nНЕПОЛНЫЙ ПЛАН: эти покупки пока не закроют грейд ${meta.letter}. После покупки снова проверь карты и пересчитай план.`;
+    if (!confirm(`${currentPlan.reached ? 'План покупки' : 'Покупка доступной части'}:\n${review}\n\nОбщие расходы не больше ${format(maxSpend)} монет. Перед каждой покупкой будет выбран самый дешёвый BIN.${partialNotice}${modeNotice}\n\nПродолжить?`)) return;
     running = true; start.disabled = true; stop.disabled = false; let spent = 0, bought = 0, listed = 0, quicksold = 0;
     const unavailable = new Set();
     let queue = [...currentPlan.missing];
     const replaceCard = failedCard => {
       unavailable.add(failedCard.id);
       const replacement = GalleryCore.galleryPlan({pool: planning.pool.filter(id => !unavailable.has(id)), slots: planning.slots, target: planning.target, collected: [...collected], scores, prices: planning.prices, maxPrice, budget: Math.max(0, maxSpend - spent)});
-      if (!replacement.reached) return false;
+      if (!replacement.reached && !replacement.missing.length) return false;
       currentPlan = {...replacement, meta, planning};
       queue = replacement.missing.filter(card => !unavailable.has(card.id) && !collected.has(card.id));
       const list = result.querySelector('.fcgh-plan');
@@ -387,7 +394,7 @@
         else await bridge('move', {handle: receipt.item.handle, destination: mode}, 45_000);
         status.textContent = `Грейд ${meta.letter}: куплено ${bought}, в очереди ${queue.length}; потрачено ${format(spent)}; выставлено ${listed}; быстро продано ${quicksold}.`; await sleep(1400 + Math.floor(Math.random() * 900));
       }
-    } finally { running = false; start.disabled = false; stop.disabled = true; result.prepend(el('div', {class: 'fcgh-run-summary', text: `Итог грейда ${meta.letter}: куплено ${bought}, потрачено ${format(spent)}, выставлено ${listed}, быстро продано ${quicksold}. Теперь нажми «1. Найти мои карты», затем «2. Составить план», чтобы проверить результат.`})); }
+    } finally { running = false; start.disabled = false; stop.disabled = true; result.prepend(el('div', {class: 'fcgh-run-summary', text: `Итог для грейда ${meta.letter}: куплено ${bought}, потрачено ${format(spent)}, выставлено ${listed}, быстро продано ${quicksold}. ${currentPlan.reached ? '' : 'Это была доступная часть неполного плана. '}Теперь нажми «1. Найти мои карты», затем «2. Составить план», чтобы проверить результат.`})); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once: true}); else mount();
 })();
