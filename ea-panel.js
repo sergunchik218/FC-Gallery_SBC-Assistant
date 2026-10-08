@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '1.4.0';
+  const BRIDGE_VERSION = '1.4.1';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), scores = {}, names = {};
   const format = value => Number(value || 0).toLocaleString('ru-RU');
@@ -129,14 +129,21 @@
   async function saveCollected() { await chrome.storage.local.set({[`fcghCollected.${persona}`]: [...collected]}); }
   async function syncSet(setId, status, result) {
     const row = selectedSet(setId); if (!row) throw new Error('Выбери набор'); const ids = [...new Set((row.pool || []).map(Number))]; if (!ids.length) throw new Error('У набора пустой пул карт');
-    result.replaceChildren(); status.className = ''; let checked = 0, newly = 0;
-    for (let at = 0; at < ids.length; at += 150) {
-      const batch = ids.slice(at, at + 150); status.textContent = `Проверяю историю: ${Math.min(at + batch.length, ids.length)} / ${ids.length}`;
-      const answer = await bridge('sync', {ids: batch}, 45_000);
-      for (const item of answer.items || []) { if (item.collected === true && !collected.has(item.defId)) { collected.add(item.defId); newly++; } if (Number.isFinite(item.score)) scores[item.defId] = item.score; if (item.name) names[item.defId] = item.name; }
-      checked += batch.length; if (at + 150 < ids.length) await sleep(2500);
+    result.replaceChildren(); status.className = ''; let checked = 0, newly = 0, foundInClub = 0;
+    for (let at = 0; at < ids.length; at += 100) {
+      const batch = ids.slice(at, at + 100); status.textContent = `Проверяю историю и клуб: ${Math.min(at + batch.length, ids.length)} / ${ids.length}`;
+      const history = await bridge('sync', {ids: batch}, 45_000);
+      await sleep(500);
+      const clubAnswer = await bridge('club', {ids: batch}, 45_000);
+      for (const item of history.items || []) { if (item.collected === true && !collected.has(item.defId)) { collected.add(item.defId); newly++; } if (Number.isFinite(item.score)) scores[item.defId] = item.score; if (item.name) names[item.defId] = item.name; }
+      for (const [rawId, count] of Object.entries(clubAnswer.counts || {})) {
+        const id = Number(rawId); if (!(Number(count) > 0)) continue;
+        foundInClub++; if (!collected.has(id)) { collected.add(id); newly++; }
+      }
+      for (const item of clubAnswer.items || []) if (item.name) names[item.defId] = item.name;
+      checked += batch.length; if (at + 100 < ids.length) await sleep(2500);
     }
-    await saveCollected(); status.textContent = `Проверено ${checked}. Собрано в наборе: ${ids.filter(id => collected.has(id)).length}. Новых отметок: ${newly}.`;
+    await saveCollected(); status.textContent = `Проверено ${checked}. Уже были в истории или клубе: ${ids.filter(id => collected.has(id)).length}. Сейчас найдены в клубе: ${foundInClub}. Новых отметок: ${newly}.`;
   }
   function renderSbc(result) {
     result.replaceChildren(); if (!sbcPlan?.cards?.length) return;
@@ -193,6 +200,12 @@
         if (ceiling < 150) { status.textContent = 'Остановлено: достигнут общий бюджет.'; break; }
         status.textContent = `Ищу ${card.name} до ${format(ceiling)}…`;
         const line = result.querySelector(`li[data-sbc-slot="${card.slot}"]`);
+        const ownedNow = await bridge('club', {ids: [card.defId]}, 45_000);
+        if (Number(ownedNow.counts?.[card.defId]) > 0) {
+          if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ ЕСТЬ В КЛУБЕ, ПОКУПКА ПРОПУЩЕНА'); }
+          status.textContent = `${card.name} уже есть в клубе. Перехожу к следующей карточке.`;
+          continue;
+        }
         const purchase = await findAndBuy({defId: card.defId, name: card.name, ceiling, purchaseMode, status});
         if (purchase.state === 'not-found') { if (line) { line.classList.add('fcgh-missed'); line.append(' — НЕТ ДРУГОГО ЛОТА В ЛИМИТЕ'); } await sleep(1400); continue; }
         if (purchase.state === 'skipped') { if (line) line.append(' — ПРОПУЩЕНО'); status.textContent = `${card.name} пропущен. Перехожу к следующей карточке.`; continue; }
@@ -369,8 +382,16 @@
         const card = queue.shift();
         if (!running) break; const remaining = maxSpend - spent, ceiling = Math.min(maxPrice, remaining); if (ceiling < 150) { status.textContent = 'Остановлено: достигнут лимит расходов.'; break; }
         const cardName = names[card.id] || '#' + card.id;
-        status.textContent = `Ищу ${cardName} до ${format(ceiling)}…`;
         const line = result.querySelector(`li[data-card-id="${card.id}"]`);
+        status.textContent = `Проверяю клуб перед покупкой ${cardName}…`;
+        const ownedNow = await bridge('club', {ids: [card.id]}, 45_000);
+        if (Number(ownedNow.counts?.[card.id]) > 0) {
+          collected.add(card.id); await saveCollected();
+          if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ ЕСТЬ В КЛУБЕ, ПОКУПКА ПРОПУЩЕНА'); }
+          status.textContent = `${cardName} уже есть в клубе. Покупка пропущена.`;
+          continue;
+        }
+        status.textContent = `Ищу ${cardName} до ${format(ceiling)}…`;
         const purchase = await findAndBuy({defId: card.id, name: cardName, ceiling, purchaseMode, status});
         if (purchase.found?.name) names[card.id] = purchase.found.name;
         if (purchase.state === 'not-found' || purchase.state === 'skipped' || purchase.state === 'rejected') {

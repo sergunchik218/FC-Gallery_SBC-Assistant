@@ -2,7 +2,7 @@
   if (window.__FCGH_PAGE_BRIDGE__) return;
   window.__FCGH_PAGE_BRIDGE__ = true;
   const CHANNEL = 'fcgh-v1';
-  const BRIDGE_VERSION = '1.4.0';
+  const BRIDGE_VERSION = '1.4.1';
   const marks = new Map(), lots = new Map(), items = new Map();
   let sequence = 0, installed = false, lastSbcFill = null;
   const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
