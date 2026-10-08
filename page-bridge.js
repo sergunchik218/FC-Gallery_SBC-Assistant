@@ -2,33 +2,58 @@
   if (window.__FCGH_PAGE_BRIDGE__) return;
   window.__FCGH_PAGE_BRIDGE__ = true;
   const CHANNEL = 'fcgh-v1';
-  const BRIDGE_VERSION = '1.4.1';
+  const BRIDGE_VERSION = '1.5.0';
   const marks = new Map(), lots = new Map(), items = new Map();
   let sequence = 0, installed = false, lastSbcFill = null;
   const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
   const itemDefId = item => positive(item?.definitionId ?? item?.resourceId);
-  const remember = raw => {
+  const booleanValue = value => value === true || value === 1 || value === 'true' ? true : value === false || value === 0 || value === 'false' ? false : null;
+  const galleryFlag = value => {
+    if (!value || typeof value !== 'object') return null;
+    for (const read of [
+      () => value.isCollected,
+      () => value.collected,
+      () => value.isGalleryCollected,
+      () => value.galleryCollected,
+      () => value.gallery?.isCollected,
+      () => value.getIsCollected?.(),
+      () => value.isCollected?.()
+    ]) {
+      try { const result = booleanValue(read()); if (result !== null) return result; } catch {}
+    }
+    return null;
+  };
+  const galleryScore = value => {
+    if (!value || typeof value !== 'object') return null;
+    for (const read of [() => value.gradingScore, () => value.galleryScore, () => value.itemScore, () => value.gallery?.gradingScore, () => value.getGradingScore?.()]) {
+      try { const result = Number(read()); if (Number.isFinite(result) && result >= 0) return result; } catch {}
+    }
+    return null;
+  };
+  const remember = (raw, entity = null) => {
     if (!raw || typeof raw !== 'object') return;
-    const defId = positive(raw.resourceId ?? raw.definitionId);
+    const defId = positive(raw.resourceId ?? raw.definitionId ?? raw.itemData?.resourceId ?? raw.itemData?.definitionId) || itemDefId(entity);
     if (!defId) return;
-    const collected = typeof raw.isCollected === 'boolean' ? raw.isCollected : null;
-    const score = Number.isFinite(raw.gradingScore) && raw.gradingScore >= 0 ? raw.gradingScore : null;
+    const collected = galleryFlag(raw) ?? galleryFlag(raw.itemData) ?? galleryFlag(entity);
+    const score = galleryScore(raw) ?? galleryScore(raw.itemData) ?? galleryScore(entity);
     if (collected === null && score === null) return;
     const old = marks.get(defId) || {};
-    marks.set(defId, {collected: collected ?? old.collected ?? null, score: score ?? old.score ?? null, seq: ++sequence});
+    // Gallery ownership is permanent: once true, a later stale response must not revert it.
+    const rememberedCollected = old.collected === true || collected === true ? true : collected ?? old.collected ?? null;
+    marks.set(defId, {collected: rememberedCollected, score: score ?? old.score ?? null, seq: ++sequence});
   };
   function installCapture() {
     if (installed) return true;
     let factory;
     try { factory = window.factories?.Item; } catch { return false; }
     if (!factory) return false;
-    let proto = Object.getPrototypeOf(factory);
-    while (proto && proto !== Object.prototype && !Object.prototype.hasOwnProperty.call(proto, 'createItem')) proto = Object.getPrototypeOf(proto);
-    if (!proto || typeof proto.createItem !== 'function') return false;
-    const original = proto.createItem;
-    proto.createItem = function(raw) {
+    let owner = factory;
+    while (owner && owner !== Object.prototype && !Object.prototype.hasOwnProperty.call(owner, 'createItem')) owner = Object.getPrototypeOf(owner);
+    if (!owner || typeof owner.createItem !== 'function') return false;
+    const original = owner.createItem;
+    owner.createItem = function(raw) {
       const result = original.apply(this, arguments);
-      try { remember(raw); } catch {}
+      try { remember(raw, result); } catch {}
       return result;
     };
     installed = true;
@@ -79,14 +104,29 @@
   };
   async function sync(ids) {
     installCapture();
-    const list = [...new Set((ids || []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 150);
-    const from = sequence;
-    const data = await observable(service().searchConceptItems(criteria({type: window.SearchType?.PLAYER ?? 'player', count: 150, offset: 0, defId: list})), 'Проверка Gallery');
-    const entities = Array.isArray(data?.items) ? data.items : [];
-    return {rows: entities.length, items: entities.map(entity => {
-      const defId = itemDefId(entity), mark = marks.get(defId);
-      return {defId, collected: mark?.seq > from ? mark.collected : mark?.collected ?? null, score: mark?.seq > from ? mark.score : mark?.score ?? null, name: nameOf(entity)};
-    }).filter(row => row.defId)};
+    const list = [...new Set((ids || []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 1000);
+    if (!list.length) return {rows: 0, pages: 0, complete: true, items: []};
+    const wanted = new Set(list), found = new Map();
+    let offset = 0, pages = 0;
+    // FC 27 currently returns Gallery/concept results in pages of at most 91.
+    // Continue until every requested definitionId was seen or EA returns an empty page.
+    while (pages < 10 && found.size < wanted.size) {
+      const data = await observable(service().searchConceptItems(criteria({type: window.SearchType?.PLAYER ?? 'player', count: 91, offset, defId: list})), `Проверка Gallery, страница ${pages + 1}`);
+      const entities = Array.isArray(data?.items) ? data.items : [];
+      pages++;
+      if (!entities.length) break;
+      for (const entity of entities) {
+        try { remember(entity, entity); } catch {}
+        const defId = itemDefId(entity);
+        if (defId && wanted.has(defId)) found.set(defId, entity);
+      }
+      offset += entities.length;
+      if (found.size < wanted.size) await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    return {rows: found.size, pages, complete: found.size === wanted.size, items: [...found.entries()].map(([defId, entity]) => {
+      const mark = marks.get(defId);
+      return {defId, collected: mark?.collected ?? galleryFlag(entity), score: mark?.score ?? galleryScore(entity), name: nameOf(entity)};
+    })};
   }
   async function search(defId, maxBuy, excludedTradeIdsArg) {
     const id = positive(defId), cap = positive(maxBuy) || 15_000_000;

@@ -1,8 +1,8 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '1.4.1';
+  const BRIDGE_VERSION = '1.5.0';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
-  const collected = new Set(), scores = {}, names = {};
+  const collected = new Set(), galleryVerified = new Set(), gallerySyncAt = new Map(), scores = {}, names = {};
   const format = value => Number(value || 0).toLocaleString('ru-RU');
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const cardCeiling = (price, globalMax) => Math.min(Number(globalMax), Math.ceil((Number(price) * 1.10 + 100) / 50) * 50);
@@ -70,7 +70,7 @@
     const after = el('select', {id: 'fcgh-after'}, [el('option', {value: 'club', text: 'Оставить в клубе'}), el('option', {value: 'transfer', text: 'В трансфер-лист'}), el('option', {value: 'list', text: 'Выставить по минимуму рынка'})]);
     const purchaseMode = el('select', {id: 'fcgh-purchase-mode'}, [el('option', {value: 'confirm', text: 'Полуавтомат: Да / Нет'}), el('option', {value: 'auto', text: 'Автоматически — на свой риск'})]);
     const form = el('div', {class: 'fcgh-form'}, [label('Категория', category), label('Набор', set), label('Грейд', grade), label('Цены', platform), label('Потолок за 1 карту', maxPrice), label('Общий бюджет', budget), label('Режим покупки', purchaseMode), label('После покупки', after), label('Ниже рынка, %', discount)]);
-    const sync = el('button', {text: '1. Найти мои карты'}), plan = el('button', {text: '2. Составить план', class: 'fcgh-primary'}), start = el('button', {text: '3. Купить по плану', class: 'fcgh-danger'}), stop = el('button', {text: 'Стоп', class: 'fcgh-secondary'}); stop.disabled = true;
+    const sync = el('button', {text: '1. Синхронизировать Gallery'}), plan = el('button', {text: '2. Составить план', class: 'fcgh-primary'}), start = el('button', {text: '3. Купить по плану', class: 'fcgh-danger'}), stop = el('button', {text: 'Стоп', class: 'fcgh-secondary'}); stop.disabled = true;
     const status = el('div', {id: 'fcgh-status', text: 'Загружаю каталог…'}), result = el('div', {id: 'fcgh-result'});
     const galleryBody = el('div', {class: 'fcgh-body'}, [el('p', {class: 'fcgh-guide', text: 'Выбери набор и грейд. Затем нажимай кнопки по порядку: 1 → 2 → 3.'}), form, el('div', {class: 'fcgh-actions'}, [sync, plan]), status, result, el('div', {class: 'fcgh-actions'}, [start, stop]), el('p', {class: 'fcgh-risk', text: 'Автопокупка нарушает правила EA и может привести к ограничению рынка или блокировке аккаунта. Перед стартом показывается точный лимит монет и количество карт.'})]);
 
@@ -91,7 +91,12 @@
     galleryTab.onclick = () => showTab('gallery'); sbcTab.onclick = () => showTab('sbc');
     category.onchange = () => fillSets(category.value, set, grade); set.onchange = () => fillGrades(set.value, grade);
     sync.onclick = () => syncSet(set.value, status, result).catch(error => fail(status, error));
-    plan.onclick = () => calculate(set.value, grade.value, {platform, maxPrice, budget, start}, status, result).catch(error => fail(status, error));
+    plan.onclick = async () => {
+      try {
+        if (Date.now() - Number(gallerySyncAt.get(set.value) || 0) > 5 * 60_000) await syncSet(set.value, status, result);
+        await calculate(set.value, grade.value, {platform, maxPrice, budget, start}, status, result);
+      } catch (error) { fail(status, error); }
+    };
     start.onclick = () => execute({maxPrice, budget, after, discount, purchaseMode}, status, result, start, stop).catch(error => fail(status, error));
     stop.onclick = () => { running = false; status.textContent = 'Останавливаю после текущего запроса…'; };
     sbcImport.onclick = () => importSbc(sbcUrl.value, {platform: sbcPlatform}, sbcStatus, sbcResult).catch(error => fail(sbcStatus, error));
@@ -124,18 +129,19 @@
     for (const category of catalog.categories || []) for (const row of category.sets || []) sets.push({...row, categoryId: category.id, categoryName: category.name});
     for (const [id, score] of Object.entries(catalog.cardScores || {})) scores[id] = Number(score);
     const categories = [...new Map(sets.map(row => [row.categoryId, row.categoryName])).entries()]; categorySelect.replaceChildren(...categories.map(([id, name]) => el('option', {value: id, text: name})));
-    fillSets(categorySelect.value, setSelect, gradeSelect); status.className = ''; status.textContent = `Каталог загружен: ${sets.length} наборов. Выбери набор и проверь историю.`;
+    fillSets(categorySelect.value, setSelect, gradeSelect); status.className = ''; status.textContent = `Каталог загружен: ${sets.length} наборов. Выбери набор и синхронизируй Gallery.`;
   }
   async function saveCollected() { await chrome.storage.local.set({[`fcghCollected.${persona}`]: [...collected]}); }
   async function syncSet(setId, status, result) {
     const row = selectedSet(setId); if (!row) throw new Error('Выбери набор'); const ids = [...new Set((row.pool || []).map(Number))]; if (!ids.length) throw new Error('У набора пустой пул карт');
-    result.replaceChildren(); status.className = ''; let checked = 0, newly = 0, foundInClub = 0;
+    result.replaceChildren(); status.className = ''; let checked = 0, returned = 0, pages = 0, newly = 0, foundInClub = 0;
     for (let at = 0; at < ids.length; at += 100) {
-      const batch = ids.slice(at, at + 100); status.textContent = `Проверяю историю и клуб: ${Math.min(at + batch.length, ids.length)} / ${ids.length}`;
+      const batch = ids.slice(at, at + 100); status.textContent = `Синхронизирую Gallery и клуб: ${Math.min(at + batch.length, ids.length)} / ${ids.length}`;
       const history = await bridge('sync', {ids: batch}, 45_000);
       await sleep(500);
       const clubAnswer = await bridge('club', {ids: batch}, 45_000);
-      for (const item of history.items || []) { if (item.collected === true && !collected.has(item.defId)) { collected.add(item.defId); newly++; } if (Number.isFinite(item.score)) scores[item.defId] = item.score; if (item.name) names[item.defId] = item.name; }
+      returned += Number(history.rows) || 0; pages += Number(history.pages) || 0;
+      for (const item of history.items || []) { if (typeof item.collected === 'boolean') galleryVerified.add(Number(item.defId)); if (item.collected === true && !collected.has(item.defId)) { collected.add(item.defId); newly++; } if (Number.isFinite(item.score)) scores[item.defId] = item.score; if (item.name) names[item.defId] = item.name; }
       for (const [rawId, count] of Object.entries(clubAnswer.counts || {})) {
         const id = Number(rawId); if (!(Number(count) > 0)) continue;
         foundInClub++; if (!collected.has(id)) { collected.add(id); newly++; }
@@ -143,7 +149,9 @@
       for (const item of clubAnswer.items || []) if (item.name) names[item.defId] = item.name;
       checked += batch.length; if (at + 100 < ids.length) await sleep(2500);
     }
-    await saveCollected(); status.textContent = `Проверено ${checked}. Уже были в истории или клубе: ${ids.filter(id => collected.has(id)).length}. Сейчас найдены в клубе: ${foundInClub}. Новых отметок: ${newly}.`;
+    await saveCollected(); gallerySyncAt.set(String(setId), Date.now());
+    const verified = ids.filter(id => galleryVerified.has(id)).length, unresolved = Math.max(0, ids.length - returned);
+    status.textContent = `Gallery проверена по ${pages} стр.: EA вернула ${returned} из ${checked} карточек, статус подтверждён для ${verified}. Уже собраны: ${ids.filter(id => collected.has(id)).length}. Сейчас в клубе: ${foundInClub}. Новых отметок: ${newly}.${unresolved ? ` Не найдено в каталоге EA: ${unresolved}.` : ''}`;
   }
   function renderSbc(result) {
     result.replaceChildren(); if (!sbcPlan?.cards?.length) return;
@@ -383,6 +391,23 @@
         if (!running) break; const remaining = maxSpend - spent, ceiling = Math.min(maxPrice, remaining); if (ceiling < 150) { status.textContent = 'Остановлено: достигнут лимит расходов.'; break; }
         const cardName = names[card.id] || '#' + card.id;
         const line = result.querySelector(`li[data-card-id="${card.id}"]`);
+        status.textContent = `Повторно проверяю Gallery для ${cardName}…`;
+        const galleryNow = await bridge('sync', {ids: [card.id]}, 45_000);
+        const galleryItem = (galleryNow.items || []).find(item => Number(item.defId) === Number(card.id));
+        if (galleryItem?.collected === true) {
+          galleryVerified.add(card.id); collected.add(card.id); await saveCollected();
+          if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ СОБРАНА В GALLERY, ПОКУПКА ПРОПУЩЕНА'); }
+          status.textContent = `${cardName} уже собрана в Gallery. Покупка пропущена.`;
+          continue;
+        }
+        if (!galleryItem || typeof galleryItem.collected !== 'boolean') {
+          unavailable.add(card.id);
+          if (line) { line.classList.add('fcgh-missed'); line.append(' — EA НЕ ПОДТВЕРДИЛА СТАТУС GALLERY'); }
+          if (!replaceCard(card)) { status.textContent = `EA не подтвердила статус Gallery для ${cardName}; покупка остановлена, чтобы не купить дубль.`; break; }
+          status.textContent = `EA не подтвердила статус Gallery для ${cardName}. Карта исключена, план пересчитан.`;
+          continue;
+        }
+        galleryVerified.add(card.id);
         status.textContent = `Проверяю клуб перед покупкой ${cardName}…`;
         const ownedNow = await bridge('club', {ids: [card.id]}, 45_000);
         if (Number(ownedNow.counts?.[card.id]) > 0) {
@@ -428,7 +453,7 @@
         else await bridge('move', {handle: receipt.item.handle, destination: mode}, 45_000);
         status.textContent = `Грейд ${meta.letter}: куплено ${bought}, в очереди ${queue.length}; потрачено ${format(spent)}; выставлено ${listed}; быстро продано ${quicksold}.`; await sleep(1400 + Math.floor(Math.random() * 900));
       }
-    } finally { running = false; start.disabled = false; stop.disabled = true; result.prepend(el('div', {class: 'fcgh-run-summary', text: `Итог для грейда ${meta.letter}: куплено ${bought}, потрачено ${format(spent)}, выставлено ${listed}, быстро продано ${quicksold}. ${currentPlan.reached ? '' : 'Это была доступная часть неполного плана. '}Теперь нажми «1. Найти мои карты», затем «2. Составить план», чтобы проверить результат.`})); }
+    } finally { running = false; start.disabled = false; stop.disabled = true; result.prepend(el('div', {class: 'fcgh-run-summary', text: `Итог для грейда ${meta.letter}: куплено ${bought}, потрачено ${format(spent)}, выставлено ${listed}, быстро продано ${quicksold}. ${currentPlan.reached ? '' : 'Это была доступная часть неполного плана. '}Теперь нажми «1. Синхронизировать Gallery», затем «2. Составить план», чтобы проверить результат.`})); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once: true}); else mount();
 })();
