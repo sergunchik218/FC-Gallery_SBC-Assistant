@@ -31,5 +31,24 @@ function galleryAlternatives(plan,{collected,scores,maxPrice,budget},replaceId) 
  const total=plan.lineup.reduce((sum,c)=>sum+c.score,0),minimum=plan.reached?plan.planning.target:total;
  return [...new Set(plan.planning.pool.map(Number))].filter(id=>!held.has(id)&&!selected.has(id)).map(id=>({id,score:Number(scores[id]),price:Number(plan.planning.prices[id]),collected:false})).filter(c=>c.score>0&&Number.isSafeInteger(c.price)&&c.price>0&&c.price<=maxPrice&&plan.cost-replaced.price+c.price<=budget&&total-replaced.score+c.score>=minimum).sort((a,b)=>a.price-b.price||b.score-a.score);
 }
-root.GalleryCore={parseCSV,validateCards,plan,galleryPlan,galleryProgress,galleryAlternatives};if(typeof module!=='undefined')module.exports=root.GalleryCore;
+const SYNC_TTL = 30 * 60_000;
+function syncQueue(sets,checkedAt,collected=[],force=false,now=Date.now()) {
+ const held=new Set(collected.map(Number));
+ return [...new Set(sets.flatMap(row=>row.pool||[]).map(Number))].filter(id=>Number.isSafeInteger(id)&&id>0&&(force||!held.has(id)&&!(Number(checkedAt[id])>0&&now-Number(checkedAt[id])>=0&&now-Number(checkedAt[id])<SYNC_TTL)));
+}
+function setOverview(row,collected,scores,checkedAt,now=Date.now()) {
+ const progress=galleryProgress({...row,slots:row.cards,collected,scores});
+ const held=new Set(collected.map(Number)),pool=[...new Set(row.pool.map(Number))];
+ const verified=pool.filter(id=>held.has(id)||Number(checkedAt[id])>0).length;
+ const fresh=pool.filter(id=>held.has(id)||(Number(checkedAt[id])>0&&now-Number(checkedAt[id])>=0&&now-Number(checkedAt[id])<SYNC_TTL)).length;
+ const timestamps=pool.map(id=>Number(checkedAt[id])||0).filter(Boolean);
+ return {...progress,verified,total:pool.length,fresh,coverage:verified===pool.length?'complete':verified?'partial':'unknown',stale:!!progress.next&&fresh<pool.length,lastAt:timestamps.length?Math.max(...timestamps):0};
+}
+function priceRisk(price,reference,referenceAt,now=Date.now()) {
+ const usable=Number.isSafeInteger(Number(reference))&&Number(reference)>0&&Number(referenceAt)>0&&now-Number(referenceAt)>=0&&now-Number(referenceAt)<=10*60_000;
+ if(!usable)return {manual:true,reason:'unknown',reference:null,premium:null};
+ const premium=(Number(price)-Number(reference))/Number(reference)*100;
+ return {manual:Number(price)*100>Number(reference)*110,reason:Number(price)*100>Number(reference)*110?'overpay':'normal',reference:Number(reference),premium};
+}
+root.GalleryCore={parseCSV,validateCards,plan,galleryPlan,galleryProgress,galleryAlternatives,syncQueue,setOverview,priceRisk,SYNC_TTL};if(typeof module!=='undefined')module.exports=root.GalleryCore;
 })(typeof globalThis!=='undefined'?globalThis:this);

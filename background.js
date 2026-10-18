@@ -82,6 +82,14 @@ chrome.alarms.onAlarm.addListener(alarm => {
 
 function expandDynamicPools(catalog, cards) {
   const at = Object.fromEntries(cards.fields.map((name, index) => [name, index]));
+  catalog.cardScores ||= {};
+  for (const row of cards.cards) {
+    const id = Number(row[at.eaId]);
+    if (Number(catalog.cardScores[id]) > 0) continue;
+    const table = catalog.scoreTable || {}, rarity = table[String(row[at.rarityEaId])] || table.default || {};
+    const score = Number(rarity[String(row[at.overall])]);
+    if (Number.isFinite(score) && score > 0) catalog.cardScores[id] = score;
+  }
   const common = cards.cards.filter(row => Number(row[at.rarityEaId]) === 0).map(row => Number(row[at.eaId])).filter(Number.isSafeInteger);
   for (const category of catalog.categories) for (const set of category.sets || []) {
     if ((!Array.isArray(set.pool) || !set.pool.length) && set.rule?.anyCommon === true) set.pool = common;

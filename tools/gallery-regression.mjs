@@ -21,7 +21,7 @@ async function runPurchase({held = [], receipt = null} = {}) {
   const saved = { 'fcghCollected.test': held }, calls = [];
   const context = {
     window: {addEventListener() {}}, document: {getElementById() { return null; }, createElement: element},
-    chrome: {storage: {local: {async get() { return saved; }, async set(value) { Object.assign(saved, value); }}}},
+    chrome: {runtime: {sendMessage(message, callback) { callback({ok: true, prices: {2: 200}, at: Date.now()}); }}, storage: {local: {async get() { return saved; }, async set(value) { Object.assign(saved, value); }}}},
     GalleryCore: core, confirm: () => true, setTimeout, clearTimeout,
   };
   vm.runInNewContext(panel.replace("if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once: true}); else mount();", `
@@ -33,7 +33,7 @@ async function runPurchase({held = [], receipt = null} = {}) {
     };
     globalThis.testExecute = execute;
   `), context);
-  context.testSetup({...plan, meta: {setId: 'test', letter: 'D', platform: 'ps5'}, planning: input}, async (method) => {
+  context.testSetup({...plan, meta: {setId: 'test', letter: 'D', platform: 'ps5', priceAt: Date.now()}, planning: input}, async (method) => {
     calls.push(method);
     if (method === 'sync') return {items: [{defId: 2, collected: false}]};
     if (method === 'club') return {counts: {}};

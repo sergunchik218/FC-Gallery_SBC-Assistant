@@ -55,3 +55,23 @@ const lot = await call('search', {defId: 123, maxBuy: 500});
 const receipt = await call('buy', {handle: lot.handle, ceiling: 500});
 if (receipt.price !== 200 || receipt.item !== null || bids !== 1) throw Error('Successful bid was lost after inventory error');
 console.log('Bridge purchase smoke test passed: inventory error preserves successful receipt.');
+
+const marketCaps = [];
+window.services.Item.searchTransferMarket = criteria => {
+  marketCaps.push(criteria.maxBuy);
+  const price = criteria.maxBuy >= 1000 ? 1000 : criteria.maxBuy >= 700 ? 700 : null;
+  return observable({items: price ? [{definitionId: 222, getAuctionData: () => ({buyNowPrice: price, tradeId: price})}] : []});
+};
+const cheaper = await call('search', {defId: 222, maxBuy: 2000});
+if (cheaper.price !== 700 || marketCaps.length !== 3) throw Error('Did not search below the first market result');
+const clubOffsets = [];
+window.services.Item.searchClubItems = criteria => {
+  clubOffsets.push(criteria.offset);
+  return observable({items: criteria.offset === 0 ? [{id: 11, definitionId: 333}] : criteria.offset === 1 ? [{id: 12, definitionId: 444}] : []});
+};
+const club = await call('club', {ids: [333, 444, 555]});
+if (club.counts[444] !== 1 || clubOffsets.join(',') !== '0,1,2') throw Error('Club pagination lost a card or stopped before exhaustion');
+window.services.Item.searchClubItems = () => observable({items: [{id: 11, definitionId: 333}]});
+try { await call('club', {ids: [333, 555]}); throw Error('Repeated page accepted'); }
+catch (error) { if (!/повторяет страницу/.test(error.message)) throw error; }
+console.log('Bridge V2 tests passed: lower-price probes, full club pagination and repeated-page protection.');

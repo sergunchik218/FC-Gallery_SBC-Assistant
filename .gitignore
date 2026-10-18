@@ -4,3 +4,6 @@ Thumbs.db
 *.zip
 .idea/
 .vscode/
+
+tools/.artifacts/
+upstream-review/
