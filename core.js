@@ -18,5 +18,18 @@ function galleryPlan(input){
  const final=fronts[slots];let best=final.filter(x=>x.score>=target).sort((a,b)=>a.cost-b.cost)[0];if(!best)best=final.slice().sort((a,b)=>b.score-a.score||a.cost-b.cost)[0];if(!best)best=fronts.flat().sort((a,b)=>b.chosen.length-a.chosen.length||b.score-a.score||a.cost-b.cost)[0];if(!best)return{reached:false,score:0,cost:0,lineup:[],missing:[],reason:'unreachable',partial:false,available:cards.length,needed:slots};
  const lineup=best.chosen.map(i=>cards[i]),reached=best.chosen.length===slots&&best.score>=target;const reason=reached?null:cards.length<slots?'not-enough-cards':best.chosen.length<slots?'budget-limited':'unreachable';return{reached,score:best.score,cost:best.cost,lineup,missing:lineup.filter(x=>!x.collected),reason,partial:!reached&&lineup.length>0,available:cards.length,needed:slots};
 }
-root.GalleryCore={parseCSV,validateCards,plan,galleryPlan};if(typeof module!=='undefined')module.exports=root.GalleryCore;
+function galleryProgress({pool,slots,collected,scores,grades}) {
+ const held=new Set(collected.map(Number));
+ const best=[...new Set(pool.map(Number))].filter(id=>held.has(id)).map(id=>Number(scores[id])||0).sort((a,b)=>b-a).slice(0,slots);
+ const score=best.reduce((sum,value)=>sum+value,0);
+ const ranked=grades.map(g=>({...g,reached:best.length===slots&&score>=Number(g.threshold)})).sort((a,b)=>a.threshold-b.threshold);
+ return {score,count:best.length,grades:ranked,current:ranked.filter(g=>g.reached).at(-1)?.letter||null,next:ranked.find(g=>!g.reached)||null};
+}
+function galleryAlternatives(plan,{collected,scores,maxPrice,budget},replaceId) {
+ const held=new Set(collected.map(Number)),selected=new Set(plan.lineup.map(c=>c.id));
+ const replaced=plan.missing.find(c=>c.id===replaceId);if(!replaced)return [];
+ const total=plan.lineup.reduce((sum,c)=>sum+c.score,0),minimum=plan.reached?plan.planning.target:total;
+ return [...new Set(plan.planning.pool.map(Number))].filter(id=>!held.has(id)&&!selected.has(id)).map(id=>({id,score:Number(scores[id]),price:Number(plan.planning.prices[id]),collected:false})).filter(c=>c.score>0&&Number.isSafeInteger(c.price)&&c.price>0&&c.price<=maxPrice&&plan.cost-replaced.price+c.price<=budget&&total-replaced.score+c.score>=minimum).sort((a,b)=>a.price-b.price||b.score-a.score);
+}
+root.GalleryCore={parseCSV,validateCards,plan,galleryPlan,galleryProgress,galleryAlternatives};if(typeof module!=='undefined')module.exports=root.GalleryCore;
 })(typeof globalThis!=='undefined'?globalThis:this);

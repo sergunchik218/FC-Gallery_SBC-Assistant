@@ -2,7 +2,7 @@
   if (window.__FCGH_PAGE_BRIDGE__) return;
   window.__FCGH_PAGE_BRIDGE__ = true;
   const CHANNEL = 'fcgh-v1';
-  const BRIDGE_VERSION = '1.5.0';
+  const BRIDGE_VERSION = '1.5.1';
   const marks = new Map(), lots = new Map(), items = new Map();
   let sequence = 0, installed = false, lastSbcFill = null;
   const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
@@ -288,7 +288,9 @@
     let bought = [];
     for (let attempt = 0; attempt < 4 && !bought.length; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 500 + attempt * 300));
-      bought = await readUnassigned(itemDefId(lot));
+      // The bid already succeeded. A delayed/failed inventory read must never
+      // turn a successful purchase into a retryable market error (e.g. 461).
+      try { bought = await readUnassigned(itemDefId(lot)); } catch { break; }
     }
     return {price, defId: itemDefId(lot), item: bought[0] || null};
   }

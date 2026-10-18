@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '1.5.0';
+  const BRIDGE_VERSION = '1.5.1';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), galleryVerified = new Set(), gallerySyncAt = new Map(), scores = {}, names = {};
   const format = value => Number(value || 0).toLocaleString('ru-RU');
@@ -39,6 +39,8 @@
   function fail(status, error) { status.className = 'fcgh-error'; status.textContent = error?.message || String(error); }
   const eaRefused = error => /\b461\b/.test(String(error?.message || error));
   async function findAndBuy({defId, name, ceiling, purchaseMode, status}) {
+    const unassigned = await bridge('unassigned', {defId}, 45_000);
+    if (unassigned.items?.length) return {state: 'owned'};
     const excludedTradeIds = [], attempts = purchaseMode === 'confirm' ? 3 : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const found = await bridge('search', {defId, maxBuy: ceiling, excludeTradeIds: excludedTradeIds}, 45_000);
@@ -113,6 +115,24 @@
   }
   function fillGrades(setId, gradeSelect) {
     const row = selectedSet(setId); gradeSelect.replaceChildren(...((row?.grades || []).map(g => el('option', {value: g.letter, text: `${g.letter} — ${format(g.threshold)} очков`}))));
+    currentPlan = null;
+    document.getElementById('fcgh-result')?.replaceChildren();
+  }
+  function renderProgress(row, result) {
+    result.querySelector('.fcgh-progress')?.remove();
+    const progress = GalleryCore.galleryProgress({pool: row.pool, slots: row.cards, collected: [...collected], scores, grades: row.grades});
+    const box = el('div', {class: 'fcgh-progress'});
+    box.append(el('b', {text: `Собранный ранг: ${progress.current || 'ещё нет'} · ${format(progress.score)} очков · ${progress.count}/${row.cards} карт`}));
+    const badges = el('div', {class: 'fcgh-tier-badges'});
+    for (const grade of progress.grades) badges.append(el('span', {class: grade.reached ? 'fcgh-tier complete' : 'fcgh-tier', text: `${grade.reached ? '✓ ' : ''}${grade.letter} · ${format(grade.threshold)}`}));
+    box.append(badges, el('div', {text: progress.next ? `До ${progress.next.letter}: ещё ${format(Math.max(0, progress.next.threshold - progress.score))} очков и ${Math.max(0, row.cards - progress.count)} незаполненных мест. При заполненных местах нужны карты с большим Item Score.` : 'Все ранги этого набора собраны.'}));
+    box.append(el('small', {text: 'Расчёт по лучшим собранным картам: история Gallery, покупки помощника и клуб.'}));
+    result.prepend(box);
+    const select = document.getElementById('fcgh-grade');
+    if (document.getElementById('fcgh-set')?.value === row.id) for (const option of select?.options || []) {
+      const grade = progress.grades.find(g => g.letter === option.value);
+      if (grade) option.textContent = `${grade.reached ? '✓ Собран ' : ''}${grade.letter} — ${format(grade.threshold)} очков`;
+    }
   }
   async function initialize(categorySelect, setSelect, gradeSelect, status) {
     let connected = null;
@@ -131,8 +151,14 @@
     const categories = [...new Map(sets.map(row => [row.categoryId, row.categoryName])).entries()]; categorySelect.replaceChildren(...categories.map(([id, name]) => el('option', {value: id, text: name})));
     fillSets(categorySelect.value, setSelect, gradeSelect); status.className = ''; status.textContent = `Каталог загружен: ${sets.length} наборов. Выбери набор и синхронизируй Gallery.`;
   }
-  async function saveCollected() { await chrome.storage.local.set({[`fcghCollected.${persona}`]: [...collected]}); }
+  async function saveCollected() {
+    const key = `fcghCollected.${persona}`, memory = await chrome.storage.local.get(key);
+    for (const id of memory[key] || []) collected.add(Number(id));
+    await chrome.storage.local.set({[key]: [...collected]});
+  }
   async function syncSet(setId, status, result) {
+    if (running) throw new Error('Сначала останови текущую покупку');
+    currentPlan = null;
     const row = selectedSet(setId); if (!row) throw new Error('Выбери набор'); const ids = [...new Set((row.pool || []).map(Number))]; if (!ids.length) throw new Error('У набора пустой пул карт');
     result.replaceChildren(); status.className = ''; let checked = 0, returned = 0, pages = 0, newly = 0, foundInClub = 0;
     for (let at = 0; at < ids.length; at += 100) {
@@ -150,6 +176,7 @@
       checked += batch.length; if (at + 100 < ids.length) await sleep(2500);
     }
     await saveCollected(); gallerySyncAt.set(String(setId), Date.now());
+    renderProgress(row, result);
     const verified = ids.filter(id => galleryVerified.has(id)).length, unresolved = Math.max(0, ids.length - returned);
     status.textContent = `Gallery проверена по ${pages} стр.: EA вернула ${returned} из ${checked} карточек, статус подтверждён для ${verified}. Уже собраны: ${ids.filter(id => collected.has(id)).length}. Сейчас в клубе: ${foundInClub}. Новых отметок: ${newly}.${unresolved ? ` Не найдено в каталоге EA: ${unresolved}.` : ''}`;
   }
@@ -215,6 +242,7 @@
           continue;
         }
         const purchase = await findAndBuy({defId: card.defId, name: card.name, ceiling, purchaseMode, status});
+        if (purchase.state === 'owned') { if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ В НЕПРИНЯТЫХ, ПОКУПКА ПРОПУЩЕНА'); } continue; }
         if (purchase.state === 'not-found') { if (line) { line.classList.add('fcgh-missed'); line.append(' — НЕТ ДРУГОГО ЛОТА В ЛИМИТЕ'); } await sleep(1400); continue; }
         if (purchase.state === 'skipped') { if (line) line.append(' — ПРОПУЩЕНО'); status.textContent = `${card.name} пропущен. Перехожу к следующей карточке.`; continue; }
         if (purchase.state === 'rejected') { if (line) { line.classList.add('fcgh-missed'); line.append(' — EA ОТКЛОНИЛА ЛОТЫ'); } status.textContent = `EA отклонила доступные лоты ${card.name}. Перехожу к следующей карточке.`; continue; }
@@ -251,6 +279,7 @@
     await bridge('sbcundo', {}, 60_000); status.textContent = 'Предыдущий состав восстановлен.';
   }
   async function calculate(setId, letter, controls, status, result) {
+    if (running) throw new Error('Сначала останови текущую покупку');
     const row = selectedSet(setId), target = row?.grades?.find(g => g.letter === letter); if (!row || !target) throw new Error('Выбери набор и грейд');
     const ids = [...new Set((row.pool || []).map(Number))]; status.className = ''; status.textContent = 'Сравниваю цены FUT.GG и Item Score FUTBIN…';
     const [priceAnswer, cardAnswer, futbinAnswer] = await Promise.all([
@@ -325,6 +354,44 @@
       list.append(el('li', {'data-card-id': String(card.id)}, [el('b', {text: names[card.id] || '#' + card.id}), el('span', {text: ` — FUT.GG ${format(card.price)}, искать самый дешёвый лот EA до ${format(ceiling)} · ${format(card.score)} очков${comparison}`})]));
     }
     result.append(list);
+    renderProgress(row, result);
+    const alternatives = el('details', {class: 'fcgh-alternatives'});
+    alternatives.append(el('summary', {text: 'Альтернативные игроки — выбрать замену и пересчитать план'}));
+    const alternativesList = el('ul');
+    const renderAlternatives = () => {
+      alternativesList.replaceChildren();
+      for (const card of currentPlan.missing) {
+        const candidates = GalleryCore.galleryAlternatives(currentPlan, {collected: [...collected], scores, maxPrice: Number(controls.maxPrice.value), budget: Number(controls.budget.value)}, card.id);
+        const entry = el('li', {}, [el('b', {text: `Вместо ${cardLabel(card.id)}: `})]);
+        if (!candidates.length) entry.append('нет замены в лимитах с сохранением очков плана');
+        for (const candidate of candidates.slice(0, 5)) {
+          const button = el('button', {text: `${cardLabel(candidate.id)} · ${format(candidate.score)} очков · ≈${format(candidate.price)} монет`});
+          button.onclick = () => {
+            if (running) return;
+            const index = currentPlan.lineup.findIndex(item => item.id === card.id);
+            if (index < 0) return;
+            currentPlan.lineup[index] = candidate;
+            currentPlan.missing = currentPlan.lineup.filter(item => !item.collected);
+            currentPlan.cost = currentPlan.missing.reduce((sum, item) => sum + item.price, 0);
+            currentPlan.score = Math.min(Number(target.threshold), currentPlan.lineup.reduce((sum, item) => sum + item.score, 0));
+            currentPlan.reached = currentPlan.lineup.length === row.cards && currentPlan.score >= Number(target.threshold);
+            currentPlan.partial = !currentPlan.reached && currentPlan.lineup.length > 0;
+            const verdictNode = result.querySelector('.fcgh-plan-ok, .fcgh-plan-bad');
+            if (verdictNode) {
+              verdictNode.className = currentPlan.reached ? 'fcgh-plan-ok' : 'fcgh-plan-bad';
+              verdictNode.textContent = `План ${letter}: ${format(currentPlan.score)} очков, около ${format(currentPlan.cost)} монет${currentPlan.reached ? '' : ' · неполный план'}`;
+            }
+            controls.start.textContent = currentPlan.reached ? '3. Купить по плану' : `3. Купить доступные (${currentPlan.missing.length})`;
+            list.replaceChildren(...currentPlan.missing.map(item => el('li', {'data-card-id': String(item.id), text: `${cardLabel(item.id)} — ≈${format(item.price)} монет · ${format(item.score)} очков`})));
+            status.textContent = `План обновлён: ${currentPlan.missing.length} покупок, около ${format(currentPlan.cost)} монет. Грейд ${letter}: ${currentPlan.reached ? 'достижим' : 'неполный план'}.`;
+            renderAlternatives();
+          };
+          entry.append(button);
+        }
+        alternativesList.append(entry);
+      }
+    };
+    renderAlternatives(); alternatives.append(alternativesList); result.append(alternatives);
     controls.start.disabled = !currentPlan.missing.length;
     controls.start.textContent = currentPlan.reached ? '3. Купить по плану' : currentPlan.missing.length ? `3. Купить доступные (${currentPlan.missing.length})` : '3. Нет доступных карт';
     if (!currentPlan.reached && !fallback.reached) {
@@ -391,6 +458,12 @@
         if (!running) break; const remaining = maxSpend - spent, ceiling = Math.min(maxPrice, remaining); if (ceiling < 150) { status.textContent = 'Остановлено: достигнут лимит расходов.'; break; }
         const cardName = names[card.id] || '#' + card.id;
         const line = result.querySelector(`li[data-card-id="${card.id}"]`);
+        const memory = await chrome.storage.local.get(`fcghCollected.${persona}`);
+        for (const id of memory[`fcghCollected.${persona}`] || []) collected.add(Number(id));
+        if (collected.has(Number(card.id))) {
+          if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ СОБРАНА, ПОКУПКА ПРОПУЩЕНА'); }
+          continue;
+        }
         status.textContent = `Повторно проверяю Gallery для ${cardName}…`;
         const galleryNow = await bridge('sync', {ids: [card.id]}, 45_000);
         const galleryItem = (galleryNow.items || []).find(item => Number(item.defId) === Number(card.id));
@@ -418,6 +491,12 @@
         }
         status.textContent = `Ищу ${cardName} до ${format(ceiling)}…`;
         const purchase = await findAndBuy({defId: card.id, name: cardName, ceiling, purchaseMode, status});
+        if (purchase.state === 'owned') {
+          collected.add(card.id); await saveCollected();
+          if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ В НЕПРИНЯТЫХ, ПОКУПКА ПРОПУЩЕНА'); }
+          renderProgress(selectedSet(meta.setId), result);
+          continue;
+        }
         if (purchase.found?.name) names[card.id] = purchase.found.name;
         if (purchase.state === 'not-found' || purchase.state === 'skipped' || purchase.state === 'rejected') {
           const reason = purchase.state === 'not-found' ? 'НЕТ ЛОТА' : purchase.state === 'skipped' ? 'ПРОПУЩЕНО' : 'EA ОТКЛОНИЛА ЛОТЫ';
@@ -427,8 +506,10 @@
           await sleep(750);
           continue;
         }
-        const receipt = purchase.receipt; if (!receipt.item?.handle) throw new Error('Покупка могла пройти, но EA не показала предмет в PURCHASED. Проверь непринятые вручную; повтор не выполнялся.');
+        const receipt = purchase.receipt;
         spent += receipt.price; bought++; collected.add(card.id); await saveCollected(); if (line) { line.classList.add('fcgh-bought'); line.append(` — КУПЛЕНО ЗА ${format(receipt.price)}`); }
+        renderProgress(selectedSet(meta.setId), result);
+        if (!receipt.item?.handle) throw new Error('Покупка подтверждена и сохранена в истории, но карта ещё не появилась в непринятых. Проверь её вручную; повторная покупка исключена.');
         if (mode === 'list') {
           status.textContent = `Проверяю новый минимальный BIN для ${names[card.id] || '#' + card.id}…`;
           await sleep(900);

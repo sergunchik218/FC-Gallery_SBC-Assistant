@@ -39,3 +39,19 @@ const result = await new Promise((resolve, reject) => {
 if (result.rows !== 100 || result.pages !== 2 || result.complete !== true) throw new Error(`Pagination failed: ${JSON.stringify(result)}`);
 if (result.items.find(row => row.defId === 100)?.collected !== true) throw new Error('Collected card on page 2 was not detected');
 console.log('Bridge pagination smoke test passed: 100 cards, 2 pages, last card collected.');
+
+// A successful bid followed by inventory error 461 must stay a successful bid.
+let bids = 0;
+window.services.Item.searchTransferMarket = () => observable({items: [{definitionId: 123, getAuctionData: () => ({buyNowPrice: 200, tradeId: 456})}]});
+window.services.Item.bid = () => { bids++; return observable({}); };
+window.services.Item.requestUnassignedItems = () => ({observe(scope, callback) { queueMicrotask(() => callback(this, {success: false, error: {code: 461}})); }, unobserve() {}});
+let nextId = 0;
+const call = (method, args) => new Promise((resolve, reject) => {
+  const id = `purchase-${++nextId}`;
+  responses.set(id, message => message.ok ? resolve(message.result) : reject(new Error(message.error)));
+  window.postMessage({channel: 'fcgh-v1', direction: 'request', id, method, args});
+});
+const lot = await call('search', {defId: 123, maxBuy: 500});
+const receipt = await call('buy', {handle: lot.handle, ceiling: 500});
+if (receipt.price !== 200 || receipt.item !== null || bids !== 1) throw Error('Successful bid was lost after inventory error');
+console.log('Bridge purchase smoke test passed: inventory error preserves successful receipt.');
