@@ -25,7 +25,7 @@ window.chrome={storage:{local:{async get(){return memory},async set(data){Object
 }}};
 window.bridgeCalls=[];
 window.addEventListener('message',event=>{const m=event.data;if(m?.direction!=='request')return;bridgeCalls.push(m.method);let result;
-if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'2.0.0',persona:'test',coins:75000};
+if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'2.0.1',persona:'test',coins:75000};
 else if(m.method==='sync')result={items:m.args.ids.map(defId=>({defId,collected:memory['fcghCollected.test'].includes(defId),score:100,name:'Игрок '+defId}))};
 else if(m.method==='club')result={items:[],counts:{}};
 else throw Error('Unexpected bridge '+m.method);

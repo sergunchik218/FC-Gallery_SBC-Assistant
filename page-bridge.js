@@ -2,7 +2,7 @@
   if (window.__FCGH_PAGE_BRIDGE__) return;
   window.__FCGH_PAGE_BRIDGE__ = true;
   const CHANNEL = 'fcgh-v1';
-  const BRIDGE_VERSION = '2.0.0';
+  const BRIDGE_VERSION = '2.0.1';
   const marks = new Map(), lots = new Map(), items = new Map();
   let sequence = 0, installed = false, lastSbcFill = null;
   const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
@@ -151,11 +151,13 @@
   }
   async function club(ids) {
     const wanted = [...new Set((ids || []).map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 100);
-    if (!wanted.length) return {items: [], counts: {}};
-    const found = [], seen = new Set(); let offset = 0, complete = false;
+    if (!wanted.length) return {items: [], counts: {}, complete: true};
+    const found = [], seen = new Set(); let offset = 0, complete = false, reason = 'page-limit';
     for (let page = 0; page < 30; page++) {
       const query = criteria({type: window.SearchType?.PLAYER ?? 'player', count: 100, offset, defId: wanted});
-      const operation = typeof service().searchClubItems === 'function' ? service().searchClubItems(query) : window.services?.Club?.search?.(query);
+      // Some EA service versions paginate with a separate page argument,
+      // rather than the DTO offset. Supply both consistently.
+      const operation = typeof service().searchClubItems === 'function' ? service().searchClubItems(query, page + 1) : window.services?.Club?.search?.(query, page + 1);
       if (!operation) throw new Error('EA не предоставила поиск по клубу в этой версии Web App');
       const data = await observable(operation, 'Поиск игроков в клубе');
       const pageItems = Array.isArray(data?.items) ? data.items : [];
@@ -167,11 +169,10 @@
         seen.add(key); found.push(item); added++;
       }
       if (wanted.every(id => found.some(item => itemDefId(item) === id))) { complete = true; break; }
-      if (!added) throw new Error('EA повторяет страницу клуба. Покупка остановлена: наличие карт не проверено полностью.');
+      if (!added) { reason = 'repeated-page'; break; }
       offset += pageItems.length;
       await new Promise(resolve => setTimeout(resolve, 200));
     }
-    if (!complete) throw new Error('Не удалось полностью проверить клуб. Повторите синхронизацию перед покупкой.');
     const counts = {}, rows = [];
     for (const item of found) {
       const defId = itemDefId(item); if (!wanted.includes(defId)) continue;
@@ -179,7 +180,7 @@
       const handle = `club-${Date.now()}-${Math.random()}`; items.set(handle, item);
       rows.push({handle, defId, id: positive(item?.id), name: nameOf(item), untradeable: item?.untradeable === true || item?.isUntradeable === true});
     }
-    return {items: rows, counts};
+    return {items: rows, counts, complete, reason: complete ? null : reason};
   }
   function currentSbcChallenge() {
     let app = null;

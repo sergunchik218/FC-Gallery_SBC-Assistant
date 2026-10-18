@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '2.0.0';
+  const BRIDGE_VERSION = '2.0.1';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), galleryVerified = new Set(), gallerySyncAt = new Map(), scores = {}, names = {};
   let operation = false, stopRequested = false, ready = false, dashboardUI = null, canUndoSbc = false;
@@ -252,7 +252,7 @@
     const ids = GalleryCore.syncQueue(ordered, checkedAt, [...collected], force);
     if (!ids.length) { status.textContent = 'Данные этих наборов актуальны. Можно составлять план.'; return; }
     invalidatePlan(); status.className = 'fcgh-sync-status';
-    let checked = 0, unresolved = 0, unnecessary = 0;
+    let checked = 0, unresolved = 0, unnecessary = 0, incompleteClub = 0;
     if (dashboardUI) { dashboardUI.progress.hidden = false; dashboardUI.progress.max = ids.length; dashboardUI.progress.value = 0; }
     for (let at = 0; at < ids.length && !stopRequested; at += 50) {
       const pendingIds = new Set(ordered.filter(needsCheck).flatMap(row => row.pool).map(Number));
@@ -274,18 +274,20 @@
       if (stopRequested) break;
       await sleep(300);
       const clubAnswer = await bridge('club', {ids: batch}, 45_000);
-      for (const id of verified) checkedAt[id] = Date.now();
+      if (clubAnswer.complete === false) incompleteClub++;
+      else for (const id of verified) checkedAt[id] = Date.now();
       for (const [rawId, count] of Object.entries(clubAnswer.counts || {})) {
         const id = Number(rawId); if (allowed.has(id) && Number(count) > 0) collected.add(id);
       }
       for (const item of clubAnswer.items || []) if (item.name) names[Number(item.defId)] = item.name;
-      unresolved += batch.filter(id => !verified.has(id) && !collected.has(id)).length;
+      unresolved += batch.filter(id => (!verified.has(id) || clubAnswer.complete === false) && !collected.has(id)).length;
       checked += batch.length; await saveSync();
       if (dashboardUI) dashboardUI.progress.value = checked + unnecessary;
       if (at + 50 < ids.length && !stopRequested) await sleep(800);
     }
     for (const row of rows.filter(Boolean)) if (!GalleryCore.setOverview(row, [...collected], scores, checkedAt).stale) gallerySyncAt.set(row.id, Date.now());
     status.textContent = `${stopRequested ? 'Остановлено' : 'Проверка завершена'}: прочитано ${checked} из ${ids.length} карт${unnecessary ? `; ${unnecessary} больше не нужны — максимальные тиры уже собраны` : ''}. ${unresolved ? `EA не подтвердила ${unresolved} карт — повторим их при следующей проверке.` : 'Данные сохранены.'} ${stopRequested ? 'Нажмите обновление ещё раз, чтобы продолжить.' : 'Выберите команду и следующий тир.'}`;
+    if (incompleteClub) status.textContent += ` Клуб проверен частично в ${incompleteClub} частях: EA повторила страницу или достигнут предел чтения. Найденные карты и история Gallery сохранены; отсутствие остальных карт не подтверждено. Перед покупкой они проверяются отдельно.`;
     renderDashboard();
   }
   const selectedSet = id => sets.find(row => row.id === id) || null;
@@ -386,6 +388,10 @@
     const prices = priceAnswer.prices;
     for (const card of sbcPlan.cards) { card.referencePrice = Number(prices[card.defId]) || null; card.livePrice = card.referencePrice || card.expectedPrice || 0; }
     sbcPlan = {...sbcPlan, platform: controls.platform.value, scanned: true, priceAt: priceAnswer.at, owned, missing, cost: missing.reduce((sum, card) => sum + Number(card.livePrice || 0), 0)};
+    if (answer.complete === false && missing.length) {
+      sbcPlan.scanned = false; renderSbc(result);
+      throw new Error(`Клуб проверен частично. Найдено ${owned.length} карт; наличие остальных пока неизвестно. Повторите проверку клуба перед покупкой.`);
+    }
     renderSbc(result); status.textContent = missing.length ? `Найдено в клубе: ${owned.length}. Нужно купить: ${missing.length}. Каждая покупка будет по самому дешёвому найденному BIN в своём лимите.` : 'Все 11 карт уже есть в клубе. Покупать ничего не нужно.';
   }
   async function buySbc(controls, status, result, start, stop) {
@@ -413,6 +419,7 @@
           status.textContent = `${card.name} уже есть в клубе. Перехожу к следующей карточке.`;
           continue;
         }
+        if (ownedNow.complete === false) throw new Error(`EA не завершила проверку клуба для ${card.name}. Покупка остановлена, чтобы не купить дубль.`);
         const purchase = await findAndBuy({defId: card.defId, name: card.name, ceiling, purchaseMode, status, platform: sbcPlan.platform, reference: card.referencePrice, referenceAt: sbcPlan.priceAt});
         if (purchase.state === 'stopped') break;
         if (purchase.state === 'owned') { if (line) { line.classList.add('fcgh-owned'); line.append(' — УЖЕ В НЕПРИНЯТЫХ, ПОКУПКА ПРОПУЩЕНА'); } continue; }
@@ -664,6 +671,7 @@
           status.textContent = `${cardName} уже есть в клубе. Покупка пропущена.`;
           continue;
         }
+        if (ownedNow.complete === false) throw new Error(`EA не завершила проверку клуба для ${cardName}. Покупка остановлена, чтобы не купить дубль.`);
         status.textContent = `Ищу ${cardName} до ${format(ceiling)}…`;
         const purchase = await findAndBuy({defId: card.id, name: cardName, ceiling, purchaseMode, status, platform: meta.platform, reference: planning.referencePrices?.[card.id] ?? null, referenceAt: meta.priceAt});
         if (purchase.state === 'stopped') break;

@@ -72,6 +72,10 @@ window.services.Item.searchClubItems = criteria => {
 const club = await call('club', {ids: [333, 444, 555]});
 if (club.counts[444] !== 1 || clubOffsets.join(',') !== '0,1,2') throw Error('Club pagination lost a card or stopped before exhaustion');
 window.services.Item.searchClubItems = () => observable({items: [{id: 11, definitionId: 333}]});
-try { await call('club', {ids: [333, 555]}); throw Error('Repeated page accepted'); }
-catch (error) { if (!/повторяет страницу/.test(error.message)) throw error; }
+const partial = await call('club', {ids: [333, 555]});
+if (partial.complete !== false || partial.reason !== 'repeated-page' || partial.counts[333] !== 1) throw Error('Partial club result lost ownership or claimed completeness');
+const pageNumbers = [];
+window.services.Item.searchClubItems = (criteria, page) => { pageNumbers.push(page); return observable({items: page === 1 ? [{id: 11, definitionId: 333}] : page === 2 ? [{id: 12, definitionId: 444}] : []}); };
+const paged = await call('club', {ids: [333, 444, 555]});
+if (!paged.complete || paged.counts[444] !== 1 || pageNumbers.join(',') !== '1,2,3') throw Error('Separate page argument was not advanced');
 console.log('Bridge V2 tests passed: lower-price probes, full club pagination and repeated-page protection.');

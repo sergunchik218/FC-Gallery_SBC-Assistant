@@ -21,7 +21,7 @@ assert.equal(saved.current, 'D'); assert.equal(saved.stale, false); assert.equal
 
 const source = fs.readFileSync(new URL('../ea-panel.js', import.meta.url), 'utf8');
 const tail = "if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once: true}); else mount();";
-function harness({price = 1200, quote = 1000, accept = false, stopOnSearch = false, clubFailure = false} = {}) {
+function harness({price = 1200, quote = 1000, accept = false, stopOnSearch = false, clubFailure = false, incompleteClub = false} = {}) {
   const calls = [], prompts = [], storage = {}, runtimeCalls = [];
   const context = {window: {addEventListener() {}}, document: {getElementById() { return null; }}, GalleryCore: core,
     setTimeout(callback) { callback(); return 1; }, clearTimeout() {},
@@ -35,7 +35,7 @@ function harness({price = 1200, quote = 1000, accept = false, stopOnSearch = fal
     if (method === 'search') { if (stopOnSearch) context.api.stop(); return {found: true, price, handle: 'lot'}; }
     if (method === 'buy') return {price, defId: 1, item: null};
     if (method === 'sync') return {items: args.ids.map(defId => ({defId, collected: defId === 1, score: 20, name: 'Card ' + defId}))};
-    if (method === 'club') { if (clubFailure) throw Error('Club offline'); return {counts: {}, items: []}; }
+    if (method === 'club') { if (clubFailure) throw Error('Club offline'); return {counts: {}, items: [], complete: !incompleteClub}; }
     throw Error(method);
   });
   return {api: context.api, calls, prompts, storage, runtimeCalls};
@@ -84,3 +84,12 @@ assert.deepEqual(large.runtimeCalls.map(c => c.ids.length), [8000, 8000, 5002]);
 const rising = harness({price: 1150, quote: 1200});
 assert.equal((await rising.api.findAndBuy({...options, reference: 1000, referenceAt: Date.now()})).state, 'skipped', 'Rising reference cannot silently permit overpayment');
 console.log('V2 regressions passed: 10% boundary, automatic/manual purchases, missing prices, stop, sync deduplication/resume/failure, operation lock.');
+
+const partialSync = harness({incompleteClub: true});
+const partialStatus = {};
+await partialSync.api.syncSets([{...sets[0], pool: Array.from({length: 60}, (_, i) => i + 1)}], partialStatus, true);
+assert.equal(partialSync.calls.filter(c => c.method === 'sync').length, 2, 'Partial club scan must not abort later Gallery batches');
+assert.equal(Object.keys(partialSync.api.state().checkedAt).length, 0, 'Unknown club absences must not be cached as verified');
+assert.ok(partialSync.storage['fcghCollected.test'].includes(1), 'Known Gallery ownership survives repeated club pages');
+assert.match(partialStatus.textContent, /Клуб проверен частично/);
+console.log('2.0.1 partial-club synchronization regressions passed.');

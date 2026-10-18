@@ -17,7 +17,7 @@ assert.equal(core.galleryProgress({...input, grades: [{letter: 'D', threshold: 1
 // Exercise the actual panel purchase loop with a stale plan, including a new session.
 const panel = fs.readFileSync(new URL('../ea-panel.js', import.meta.url), 'utf8');
 function element() { return {append() {}, prepend() {}, querySelector() { return null; }, classList: {add() {}}}; }
-async function runPurchase({held = [], receipt = null} = {}) {
+async function runPurchase({held = [], receipt = null, clubComplete = true} = {}) {
   const saved = { 'fcghCollected.test': held }, calls = [];
   const context = {
     window: {addEventListener() {}}, document: {getElementById() { return null; }, createElement: element},
@@ -36,7 +36,7 @@ async function runPurchase({held = [], receipt = null} = {}) {
   context.testSetup({...plan, meta: {setId: 'test', letter: 'D', platform: 'ps5', priceAt: Date.now()}, planning: input}, async (method) => {
     calls.push(method);
     if (method === 'sync') return {items: [{defId: 2, collected: false}]};
-    if (method === 'club') return {counts: {}};
+    if (method === 'club') return {counts: {}, complete: clubComplete};
     if (method === 'unassigned') return {items: []};
     if (method === 'search') return {found: true, price: 200, handle: 'lot'};
     if (method === 'buy') return receipt;
@@ -57,3 +57,7 @@ assert.ok(delayed.saved['fcghCollected.test'].includes(2), 'Save confirmed purch
 const afterReload = await runPurchase({held: delayed.saved['fcghCollected.test']});
 assert.deepEqual(afterReload.calls, [], 'A reload must not buy the delayed card again');
 console.log('Gallery regression tests passed: persistent ownership, stale plans, delayed items, alternatives and tiers.');
+
+const incomplete = await runPurchase({clubComplete: false});
+assert.match(incomplete.error?.message || '', /не завершила проверку клуба/);
+assert.equal(incomplete.calls.includes('buy'), false, 'An incomplete club scan must never permit buying an unknown card');

@@ -1,6 +1,6 @@
 {
   "name": "fc-gallery-sbc-assistant",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "private": true,
   "scripts": {
     "test": "node --check core.js && node --check background.js && node --check page-bridge.js && node --check ea-panel.js && node --check popup.js && node --check futbin-import.js && node tools/validate-gallery-catalog.mjs && node tools/gallery-regression.mjs && node tools/v2-regression.mjs && node tools/bridge-pagination-smoke.mjs",
