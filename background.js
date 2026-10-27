@@ -1,6 +1,7 @@
 const GAME = 27;
 const FUTGG_MANIFEST = `https://r2.fut.gg/${GAME}/manifest.json`;
 const OWN_DATA_ROOT = 'https://raw.githubusercontent.com/sergunchik218/FC-Gallery_SBC-Assistant/main';
+const BUILTIN_CATALOG_VERSION = 23;
 const DATA_TTL = 7 * 24 * 60 * 60_000;
 const WEEK_MINUTES = 7 * 24 * 60;
 const FUTBIN_LOAD_TIMEOUT = 60_000;
@@ -42,7 +43,7 @@ async function dataBundle(force = false) {
   if (dataBundleMemo && !force) return dataBundleMemo;
   const stored = await chrome.storage.local.get('fcghDataBundle27');
   const cached = stored.fcghDataBundle27;
-  if (!force && cached?.at && Date.now() - cached.at < DATA_TTL && validCatalog(cached.catalog) && validCards(cached.cards)) return (dataBundleMemo = cached);
+  if (!force && cached?.at && Date.now() - cached.at < DATA_TTL && Number(cached.catalog?.version) >= BUILTIN_CATALOG_VERSION && validCatalog(cached.catalog) && validCards(cached.cards)) return (dataBundleMemo = cached);
   try {
     const [catalog, cards] = await Promise.all([
       json(`${OWN_DATA_ROOT}/gallery-catalog-27.json`),
@@ -53,7 +54,7 @@ async function dataBundle(force = false) {
     await chrome.storage.local.set({fcghDataBundle27: bundle});
     return (dataBundleMemo = bundle);
   } catch (error) {
-    if (validCatalog(cached?.catalog) && validCards(cached?.cards)) return (dataBundleMemo = cached);
+    if (Number(cached?.catalog?.version) >= BUILTIN_CATALOG_VERSION && validCatalog(cached?.catalog) && validCards(cached?.cards)) return (dataBundleMemo = cached);
     return (dataBundleMemo = await localDataBundle());
   }
 }
@@ -67,7 +68,11 @@ async function updateOwnedData() {
   return {source: bundle.source, at: bundle.at || Date.now(), version: bundle.catalog.version ?? null, categories: bundle.catalog.categories.length, sets, cards: bundle.cards.cards.length};
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async details => {
+  if (details.reason === 'update' || details.reason === 'install') {
+    await chrome.storage.local.remove('fcghDataBundle27');
+    dataBundleMemo = null; catalogMemo = null; cardsMemo = null;
+  }
   chrome.alarms.create('fcgh-weekly-data-update', {delayInMinutes: WEEK_MINUTES, periodInMinutes: WEEK_MINUTES});
 });
 
@@ -249,7 +254,9 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     if (message?.type === 'fcgh.data.status') {
       const stored = await chrome.storage.local.get('fcghDataBundle27');
       const bundle = stored.fcghDataBundle27;
-      return {ok: true, data: {at: bundle?.at || null, source: bundle?.source || 'built-in', version: bundle?.catalog?.version ?? null}};
+      const sourceBundle = Number(bundle?.catalog?.version) >= BUILTIN_CATALOG_VERSION ? bundle : await localDataBundle();
+      const sets = sourceBundle.catalog.categories.reduce((sum, category) => sum + (category.sets?.length || 0), 0);
+      return {ok: true, data: {at: sourceBundle?.at || null, source: sourceBundle?.source || 'built-in', version: sourceBundle?.catalog?.version ?? null, categories: sourceBundle.catalog.categories.length, sets}};
     }
     if (message?.type === 'fcgh.prices') {
       const book = await priceBook(message.platform || 'ps5', message.force === true);

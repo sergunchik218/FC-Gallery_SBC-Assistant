@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '3.0.0';
+  const BRIDGE_VERSION = '3.0.1';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), galleryVerified = new Set(), gallerySyncAt = new Map(), scores = {}, names = {}, collectedSources = {};
   let operation = false, stopRequested = false, ready = false, dashboardUI = null, canUndoSbc = false;
@@ -207,12 +207,12 @@
     const force = el('input', {type: 'checkbox'});
     const status = el('div', {class: 'fcgh-sync-status', role: 'status', 'aria-live': 'polite', text: 'Загружаем вашу историю…'});
     const progress = el('progress', {max: '100', value: '0', 'aria-label': 'Прогресс синхронизации'}); progress.hidden = true;
-    const stats = el('div', {class: 'fcgh-collection-stats'}), grid = el('div', {class: 'fcgh-set-grid'}), log = el('details', {class: 'fcgh-journal'});
+    const stats = el('div', {class: 'fcgh-collection-stats'}), categories = el('div', {class: 'fcgh-category-strip'}), grid = el('div', {class: 'fcgh-set-grid'}), log = el('details', {class: 'fcgh-journal'});
     log.append(el('summary', {text: 'История покупок и пропусков'}), el('div', {id: 'fcgh-purchase-log'}));
     const help = el('details', {class: 'fcgh-help'}, [el('summary', {text: 'Первый запуск? Как пользоваться'}), el('ol', {}, [el('li', {text: 'Нажмите «Обновить всю коллекцию». Это только проверка: монеты не тратятся. Её можно остановить и продолжить.'}), el('li', {text: 'Зелёные тиры уже собраны. Серые ещё не подтверждены. «Не проверено» не означает, что набор пуст.'}), el('li', {text: 'Нажмите «План до…» у команды. Укажите бюджет, проверьте список покупок и альтернативы.'}), el('li', {text: 'Начните покупку. Лот дороже ориентира более чем на 10% всегда потребует вашего разрешения.'})])]);
     const syncOptions = el('details', {class: 'fcgh-sync-options'}, [el('summary', {text: 'Параметры синхронизации'}), el('label', {class: 'fcgh-force-label'}, [force, ' Полная перепроверка, включая свежие данные']), el('div', {class: 'fcgh-actions'}, [syncCategory])]);
-    body.append(el('div', {class: 'fcgh-page-title'}, [el('div', {}, [el('span', {class: 'fcgh-eyebrow', text: 'GALLERY FC 27'}), el('h3', {text: 'Ваша коллекция'}), el('p', {text: '196 актуальных наборов. Видно, что подтверждено EA, сколько очков уже есть и чего не хватает до следующего тира.'})]), el('span', {class: 'fcgh-live-badge', text: '● История включена'})]), stats, el('div', {class: 'fcgh-toolbar'}, [el('div', {class: 'fcgh-dashboard-filters'}, [search, category, filter]), el('div', {class: 'fcgh-actions'}, [syncAll, stop])]), syncOptions, progress, status, el('p', {class: 'fcgh-legend', text: '✓ Собрано навсегда · ◌ Ещё не подтверждено · Источники: EA Gallery + клуб + покупки помощника.'}), grid, help, log);
-    dashboardUI = {search, category, filter, status, stats, grid, progress, openSet};
+    body.append(el('div', {class: 'fcgh-page-title'}, [el('div', {}, [el('span', {class: 'fcgh-eyebrow', text: 'GALLERY FC 27'}), el('h3', {text: 'Ваша коллекция'}), el('p', {text: 'Актуальные лиги и команды видны отдельными разделами. Выберите лигу — ниже останутся только её наборы.'})]), el('span', {class: 'fcgh-live-badge', text: '● Каталог V3'})]), stats, el('h4', {class: 'fcgh-section-title', text: 'Лиги и категории'}), categories, el('div', {class: 'fcgh-toolbar'}, [el('div', {class: 'fcgh-dashboard-filters'}, [search, category, filter]), el('div', {class: 'fcgh-actions'}, [syncAll, stop])]), syncOptions, progress, status, el('p', {class: 'fcgh-legend', text: '✓ Собрано навсегда · ◌ Ещё не подтверждено · Источники: EA Gallery + клуб + покупки помощника.'}), grid, help, log);
+    dashboardUI = {search, category, filter, status, stats, categories, grid, progress, openSet};
     filter.append(...['D', 'C', 'B', 'A', 'S'].map(letter => el('option', {value: 'tier:' + letter, text: 'Текущий тир ' + letter})));
     search.oninput = renderDashboard; category.onchange = renderDashboard; filter.onchange = renderDashboard;
     syncAll.onclick = () => runOperation(() => syncSets(sets, status, force.checked), 'sync');
@@ -223,6 +223,14 @@
     if (!dashboardUI || !catalog) return;
     const ui = dashboardUI;
     const overview = sets.map(row => ({row, state: GalleryCore.setOverview(row, [...collected], scores, checkedAt)}));
+    const categoryRows = [...new Map(sets.map(row => [row.categoryId, row.categoryName])).entries()].map(([id, name]) => ({id, name, count: sets.filter(row => row.categoryId === id).length}));
+    ui.categories.replaceChildren();
+    const allCategories = el('button', {class: !ui.category.value ? 'active' : '', text: `Все · ${sets.length}`});
+    allCategories.onclick = () => { ui.category.value = ''; renderDashboard(); }; ui.categories.append(allCategories);
+    for (const row of categoryRows) {
+      const button = el('button', {class: ui.category.value === row.id ? 'active' : '', text: `${row.name} · ${row.count}`});
+      button.onclick = () => { ui.category.value = row.id; renderDashboard(); }; ui.categories.append(button);
+    }
     ui.stats.replaceChildren(...[
       [sets.length, 'наборов'], [overview.filter(x => x.state.current).length, 'собран хотя бы один тир'],
       [overview.filter(x => !x.state.next).length, 'максимальный тир'], [overview.filter(x => x.state.stale).length, 'нужна проверка']

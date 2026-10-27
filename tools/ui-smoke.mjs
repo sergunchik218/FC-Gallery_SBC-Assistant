@@ -25,7 +25,7 @@ window.chrome={storage:{local:{async get(){return memory},async set(data){Object
 }}};
 window.bridgeCalls=[];
 window.addEventListener('message',event=>{const m=event.data;if(m?.direction!=='request')return;bridgeCalls.push(m.method);let result;
-if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'3.0.0',persona:'test',coins:75000};
+if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'3.0.1',persona:'test',coins:75000};
 else if(m.method==='sync')result={items:m.args.ids.map(defId=>({defId,collected:memory['fcghCollected.test'].includes(defId),score:100,name:'Игрок '+defId}))};
 else if(m.method==='club')result={items:[],counts:{}};
 else throw Error('Unexpected bridge '+m.method);
@@ -55,6 +55,7 @@ try {
   await waitFor("document.querySelectorAll('.fcgh-set-card').length === 9");
   await evaluate("document.getElementById('fcgh-toggle').click()");
   assert.equal(await evaluate("document.querySelector('.fcgh-overview').hidden"), false);
+  assert.equal(await evaluate("document.querySelectorAll('.fcgh-category-strip button').length"), 2, 'All categories and the fixture league are visible as buttons');
   assert.equal(await evaluate("bridgeCalls.filter(m=>m!=='status').length"), 0, 'Overview loads from cache without EA requests');
   assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card.is-complete').length"), 1);
   assert.ok(await evaluate("document.querySelector('.fcgh-set-card').textContent.includes('Тир S')"));

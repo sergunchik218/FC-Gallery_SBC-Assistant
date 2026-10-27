@@ -11,7 +11,7 @@ const date = value => value ? new Date(value).toLocaleString('ru-RU') : 'ещё 
 async function showStatus() {
   try {
     const data = await send({type: 'fcgh.data.status'});
-    status.textContent = `Источник: ${data.source === 'github' ? 'наш GitHub' : 'встроенная копия'}. Последняя проверка: ${date(data.at)}.`;
+    status.textContent = `База v${data.version ?? '?'}: ${data.sets ?? '?'} наборов, ${data.categories ?? '?'} категорий. Источник: ${data.source === 'github' ? 'наш GitHub' : 'встроенная копия'}. Проверка: ${date(data.at)}.`;
   } catch (error) { status.textContent = error.message; }
 }
 
