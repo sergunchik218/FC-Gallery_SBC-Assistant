@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "FC Gallery + ИПК Assistant",
-  "version": "2.0.1",
-  "description": "Gallery и ИПК FC 27 внутри EA Web App: FUTBIN-составы, клуб, цены и управляемая покупка.",
+  "version": "3.0.0",
+  "description": "Gallery FC 27 и ИПК: 196 наборов, понятные тиры, проверка коллекции, цены и управляемая покупка.",
   "permissions": [
     "storage",
     "tabs",

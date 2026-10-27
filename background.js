@@ -90,9 +90,18 @@ function expandDynamicPools(catalog, cards) {
     const score = Number(rarity[String(row[at.overall])]);
     if (Number.isFinite(score) && score > 0) catalog.cardScores[id] = score;
   }
-  const common = cards.cards.filter(row => Number(row[at.rarityEaId]) === 0).map(row => Number(row[at.eaId])).filter(Number.isSafeInteger);
+  const select = predicate => cards.cards.filter(predicate).map(row => Number(row[at.eaId])).filter(Number.isSafeInteger);
+  const common = select(row => Number(row[at.rarityEaId]) === 0);
   for (const category of catalog.categories) for (const set of category.sets || []) {
-    if ((!Array.isArray(set.pool) || !set.pool.length) && set.rule?.anyCommon === true) set.pool = common;
+    let dynamic = [];
+    if (set.rule?.anyCommon === true) dynamic = common;
+    else if (set.rule?.clubEaId != null && Number.isSafeInteger(Number(set.rule.clubEaId))) dynamic = select(row => Number(row[at.clubEaId]) === Number(set.rule.clubEaId) || Number(row[at.uniqueClubEaId]) === Number(set.rule.clubEaId));
+    else if (set.rule?.leagueEaId != null && Number.isSafeInteger(Number(set.rule.leagueEaId))) dynamic = select(row => Number(row[at.leagueEaId]) === Number(set.rule.leagueEaId));
+    else if (Array.isArray(set.rule?.rarityEaIds)) {
+      const rarityIds = new Set(set.rule.rarityEaIds.map(Number));
+      dynamic = select(row => rarityIds.has(Number(row[at.rarityEaId])));
+    }
+    if (dynamic.length) set.pool = [...new Set([...(set.pool || []), ...dynamic])].sort((a, b) => a - b);
   }
   return catalog;
 }

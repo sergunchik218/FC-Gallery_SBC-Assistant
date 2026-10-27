@@ -22,7 +22,8 @@ for (const category of catalog.categories) {
     if (setIds.has(fullId)) fail(`Повтор набора ${fullId}`);
     setIds.add(fullId);
     if (!Number.isSafeInteger(Number(set.cards)) || Number(set.cards) <= 0) fail(`Некорректное число карт: ${fullId}`);
-    if ((!Array.isArray(set.pool) || !set.pool.length) && set.rule?.anyCommon !== true) fail(`Пустой пул: ${fullId}`);
+    const dynamic = set.rule?.anyCommon === true || set.rule?.clubEaId != null && Number.isSafeInteger(Number(set.rule.clubEaId)) || set.rule?.leagueEaId != null && Number.isSafeInteger(Number(set.rule.leagueEaId)) || Array.isArray(set.rule?.rarityEaIds);
+    if ((!Array.isArray(set.pool) || !set.pool.length) && !dynamic) fail(`Пустой пул: ${fullId}`);
     if (!Array.isArray(set.grades) || !set.grades.length) fail(`Нет грейдов: ${fullId}`);
     let lastThreshold = -1;
     for (const grade of set.grades) {

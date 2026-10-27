@@ -25,7 +25,7 @@ window.chrome={storage:{local:{async get(){return memory},async set(data){Object
 }}};
 window.bridgeCalls=[];
 window.addEventListener('message',event=>{const m=event.data;if(m?.direction!=='request')return;bridgeCalls.push(m.method);let result;
-if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'2.0.1',persona:'test',coins:75000};
+if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'3.0.0',persona:'test',coins:75000};
 else if(m.method==='sync')result={items:m.args.ids.map(defId=>({defId,collected:memory['fcghCollected.test'].includes(defId),score:100,name:'Игрок '+defId}))};
 else if(m.method==='club')result={items:[],counts:{}};
 else throw Error('Unexpected bridge '+m.method);
@@ -58,7 +58,7 @@ try {
   assert.equal(await evaluate("bridgeCalls.filter(m=>m!=='status').length"), 0, 'Overview loads from cache without EA requests');
   assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card.is-complete').length"), 1);
   assert.ok(await evaluate("document.querySelector('.fcgh-set-card').textContent.includes('Тир S')"));
-  fs.writeFileSync(path.join(out, 'v2-desktop.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
+  fs.writeFileSync(path.join(out, 'v3-desktop.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
   await evaluate("const search=document.querySelector('.fcgh-dashboard-filters input');search.value='Liverpool';search.dispatchEvent(new Event('input'))");
   assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card').length"), 1);
   await evaluate("document.querySelector('.fcgh-open-set').click()");
@@ -68,12 +68,17 @@ try {
   await evaluate("document.getElementById('fcgh-plan-button').click()");
   await waitFor("!document.getElementById('fcgh-buy').disabled");
   assert.ok(await evaluate("document.querySelector('#fcgh-result .fcgh-plan').textContent.length > 0"));
-  fs.writeFileSync(path.join(out, 'v2-plan.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
+  assert.ok(await evaluate("document.querySelectorAll('#fcgh-result .fcgh-plan input[type=checkbox]:checked').length > 0"));
+  await evaluate("[...document.querySelectorAll('.fcgh-link-button')].find(x=>x.textContent==='Снять выбор').click()");
+  assert.equal(await evaluate("document.getElementById('fcgh-buy').disabled"), true, 'Empty purchase selection disables the buy button');
+  await evaluate("[...document.querySelectorAll('.fcgh-link-button')].find(x=>x.textContent==='Выбрать все').click()");
+  assert.equal(await evaluate("document.getElementById('fcgh-buy').disabled"), false, 'Select all restores the buy action');
+  fs.writeFileSync(path.join(out, 'v3-plan.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
   await evaluate("document.getElementById('fcgh-budget').value=2000;document.getElementById('fcgh-budget').dispatchEvent(new Event('change'))");
   assert.equal(await evaluate("document.getElementById('fcgh-buy').disabled"), true, 'Changing budget invalidates purchase plan');
   await evaluate("document.querySelectorAll('.fcgh-tab')[0].click();const search2=document.querySelector('.fcgh-dashboard-filters input');search2.value='';search2.dispatchEvent(new Event('input'));document.getElementById('fcgh-panel').scrollTop=0");
   await call('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 1, mobile: false});
   assert.equal(await evaluate("document.getElementById('fcgh-panel').scrollWidth <= document.getElementById('fcgh-panel').clientWidth"), true, 'Mobile must not overflow horizontally');
-  fs.writeFileSync(path.join(out, 'v2-mobile.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
+  fs.writeFileSync(path.join(out, 'v3-mobile.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
   console.log('Browser UI passed: cached tiers, search, target selection, plan, invalidation, desktop/mobile layout. Screenshots: tools/.artifacts/');
 } finally { socket?.close(); browser.kill(); }

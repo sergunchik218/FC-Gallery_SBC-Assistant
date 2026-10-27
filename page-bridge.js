@@ -2,7 +2,7 @@
   if (window.__FCGH_PAGE_BRIDGE__) return;
   window.__FCGH_PAGE_BRIDGE__ = true;
   const CHANNEL = 'fcgh-v1';
-  const BRIDGE_VERSION = '2.0.1';
+  const BRIDGE_VERSION = '3.0.0';
   const marks = new Map(), lots = new Map(), items = new Map();
   let sequence = 0, installed = false, lastSbcFill = null;
   const positive = value => Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
@@ -15,7 +15,12 @@
       () => value.collected,
       () => value.isGalleryCollected,
       () => value.galleryCollected,
+      () => value.isInGallery,
+      () => value.gallery?.collected,
       () => value.gallery?.isCollected,
+      () => value.metadata?.isCollected,
+      () => value.itemData?.isCollected,
+      () => value.getGalleryCollected?.(),
       () => value.getIsCollected?.(),
       () => value.isCollected?.()
     ]) {
