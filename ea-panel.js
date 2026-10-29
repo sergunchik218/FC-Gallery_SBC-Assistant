@@ -1,6 +1,6 @@
 (() => {
   const CHANNEL = 'fcgh-v1', pending = new Map();
-  const BRIDGE_VERSION = '3.0.1';
+  const BRIDGE_VERSION = '3.0.2';
   let callId = 0, catalog = null, sets = [], currentPlan = null, sbcPlan = null, running = false, persona = 'default';
   const collected = new Set(), galleryVerified = new Set(), gallerySyncAt = new Map(), scores = {}, names = {}, collectedSources = {};
   let operation = false, stopRequested = false, ready = false, dashboardUI = null, canUndoSbc = false;
@@ -202,7 +202,7 @@
   function mountDashboard(body, openSet) {
     const search = el('input', {type: 'search', placeholder: 'Найти команду или набор…', 'aria-label': 'Поиск наборов'});
     const category = el('select', {'aria-label': 'Категория коллекции'}, [el('option', {value: '', text: 'Все категории'})]);
-    const filter = el('select', {'aria-label': 'Статус набора'}, [el('option', {value: '', text: 'Все наборы'}), el('option', {value: 'upgrade', text: 'Можно повысить тир'}), el('option', {value: 'complete', text: 'Все тиры собраны'}), el('option', {value: 'unknown', text: 'Нужна синхронизация'})]);
+    const filter = el('select', {'aria-label': 'Статус набора'}, [el('option', {value: '', text: 'Все наборы'}), el('option', {value: 'no-tier', text: 'Тир ещё не собран'}), el('option', {value: 'upgrade', text: 'Можно повысить тир'}), el('option', {value: 'complete', text: 'Все тиры собраны'}), el('option', {value: 'unknown', text: 'Нужна синхронизация'})]);
     const syncAll = el('button', {class: 'fcgh-primary', text: 'Обновить всю коллекцию'}), syncCategory = el('button', {text: 'Обновить категорию'}), stop = el('button', {'data-stop': 'true', text: 'Остановить'});
     const force = el('input', {type: 'checkbox'});
     const status = el('div', {class: 'fcgh-sync-status', role: 'status', 'aria-live': 'polite', text: 'Загружаем вашу историю…'});
@@ -236,7 +236,7 @@
       [overview.filter(x => !x.state.next).length, 'максимальный тир'], [overview.filter(x => x.state.stale).length, 'нужна проверка']
     ].map(([number, title]) => el('div', {}, [el('b', {text: format(number)}), el('span', {text: title})])));
     const query = ui.search.value.trim().toLocaleLowerCase('ru-RU');
-    const visible = overview.filter(({row, state}) => (!ui.category.value || row.categoryId === ui.category.value) && `${row.name} ${row.categoryName}`.toLocaleLowerCase('ru-RU').includes(query) && (!ui.filter.value || ui.filter.value === 'complete' && !state.next || ui.filter.value === 'upgrade' && state.next || ui.filter.value === 'unknown' && state.stale || ui.filter.value === 'tier:' + state.current));
+    const visible = overview.filter(({row, state}) => (!ui.category.value || row.categoryId === ui.category.value) && `${row.name} ${row.categoryName}`.toLocaleLowerCase('ru-RU').includes(query) && (!ui.filter.value || ui.filter.value === 'no-tier' && !state.current || ui.filter.value === 'complete' && !state.next || ui.filter.value === 'upgrade' && state.next || ui.filter.value === 'unknown' && state.stale || ui.filter.value === 'tier:' + state.current));
     ui.grid.replaceChildren();
     for (const {row, state} of visible) {
       const tile = el('article', {class: `fcgh-set-card${!state.next ? ' is-complete' : ''}`});

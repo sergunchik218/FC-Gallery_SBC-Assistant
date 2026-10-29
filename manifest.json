@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FC Gallery + ИПК Assistant",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Gallery FC 27 и ИПК: 196 наборов, понятные тиры, проверка коллекции, цены и управляемая покупка.",
   "permissions": [
     "storage",

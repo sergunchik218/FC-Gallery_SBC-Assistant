@@ -25,7 +25,7 @@ window.chrome={storage:{local:{async get(){return memory},async set(data){Object
 }}};
 window.bridgeCalls=[];
 window.addEventListener('message',event=>{const m=event.data;if(m?.direction!=='request')return;bridgeCalls.push(m.method);let result;
-if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'3.0.1',persona:'test',coins:75000};
+if(m.method==='status')result={ready:true,capture:true,bridgeVersion:'3.0.2',persona:'test',coins:75000};
 else if(m.method==='sync')result={items:m.args.ids.map(defId=>({defId,collected:memory['fcghCollected.test'].includes(defId),score:100,name:'Игрок '+defId}))};
 else if(m.method==='club')result={items:[],counts:{}};
 else throw Error('Unexpected bridge '+m.method);
@@ -59,6 +59,10 @@ try {
   assert.equal(await evaluate("bridgeCalls.filter(m=>m!=='status').length"), 0, 'Overview loads from cache without EA requests');
   assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card.is-complete').length"), 1);
   assert.ok(await evaluate("document.querySelector('.fcgh-set-card').textContent.includes('Тир S')"));
+  await evaluate("(()=>{const tierFilter=document.querySelector('select[aria-label=\"Статус набора\"]');tierFilter.value='no-tier';tierFilter.dispatchEvent(new Event('change'))})()");
+  assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card').length"), 6, 'No-tier filter shows only sets without a current D/C/B/A/S rank');
+  assert.equal(await evaluate("[...document.querySelectorAll('.fcgh-set-card .fcgh-current-tier')].every(node=>/пока не собран|ещё не определён/.test(node.textContent))"), true);
+  await evaluate("(()=>{const tierFilter=document.querySelector('select[aria-label=\"Статус набора\"]');tierFilter.value='';tierFilter.dispatchEvent(new Event('change'))})()");
   fs.writeFileSync(path.join(out, 'v3-desktop.png'), Buffer.from((await call('Page.captureScreenshot', {format: 'png'})).data, 'base64'));
   await evaluate("const search=document.querySelector('.fcgh-dashboard-filters input');search.value='Liverpool';search.dispatchEvent(new Event('input'))");
   assert.equal(await evaluate("document.querySelectorAll('.fcgh-set-card').length"), 1);
